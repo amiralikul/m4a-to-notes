@@ -34,6 +34,6 @@ Commands:
 };
 
 module.exports = {
-  startCommand,
-  helpCommand
+  startCommand: startCommand,
+  helpCommand: helpCommand
 };
