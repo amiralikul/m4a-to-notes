@@ -22,7 +22,7 @@ class Logger {
   log(level, message, meta = {}) {
     if (LOG_LEVELS[level] <= this.level) {
       const logEntry = this.formatMessage(level, message, meta);
-      console.log(JSON.stringify(logEntry));
+      console.log(JSON.stringify(logEntry, null, 2));
     }
   }
 

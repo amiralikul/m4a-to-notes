@@ -1,5 +1,7 @@
 import Logger from '../logger.js';
 import { transcribeAudio } from '../services/transcription.js';
+import { ConversationService } from '../services/conversation.js';
+import { getChatCompletion } from '../services/chat.js';
 
 const TELEGRAM_API = 'https://api.telegram.org/bot';
 
@@ -175,12 +177,14 @@ class TelegramBot {
   }
 }
 
-// Simple in-memory cache for processed updates (per worker instance)
+// Simple in-memory cache for processed updates and files (per worker instance)
 const processedUpdates = new Set();
+const processedFiles = new Set();
 
 export async function handleTelegramUpdate(update, env) {
   const logger = new Logger(env.LOG_LEVEL || 'INFO');
   const bot = new TelegramBot(env.TELEGRAM_BOT_TOKEN, logger);
+  const conversationService = new ConversationService(env.CONVERSATIONS, logger);
   
   logger.logTelegramUpdate(update);
   
@@ -197,6 +201,15 @@ export async function handleTelegramUpdate(update, env) {
     const firstUpdate = processedUpdates.values().next().value;
     processedUpdates.delete(firstUpdate);
   }
+  
+  // Helper function to manage processed files cache
+  const addProcessedFile = (fileId) => {
+    processedFiles.add(fileId);
+    if (processedFiles.size > 1000) {
+      const firstFile = processedFiles.values().next().value;
+      processedFiles.delete(firstFile);
+    }
+  };
   
   if (update.message) {
     const chatId = update.message.chat.id;
@@ -247,6 +260,19 @@ Just upload your audio file and I'll handle the rest!`);
       
       logger.logFileProcessing(fileInfo);
       
+      // Check for duplicate file processing
+      if (processedFiles.has(fileInfo.file_id)) {
+        logger.warn('Duplicate file processing detected, skipping', { 
+          fileId: fileInfo.file_id,
+          chatId,
+          updateId 
+        });
+        return;
+      }
+      
+      // Mark file as being processed
+      addProcessedFile(fileInfo.file_id);
+      
       if (fileInfo.file_size > 25 * 1024 * 1024) {
         logger.warn('File too large', { 
           fileSize: fileInfo.file_size,
@@ -278,8 +304,16 @@ Just upload your audio file and I'll handle the rest!`);
             chatId,
             transcriptionLength: transcription.length
           });
+          
+          // Store transcription in conversation context
           try {
-            await bot.sendMessage(chatId, `📝 *Transcription:*\n\n${transcription}`);
+            await conversationService.addTranscription(chatId, transcription, fileInfo.file_id);
+          } catch (error) {
+            logger.error('Failed to store transcription in conversation', { chatId, error: error.message });
+          }
+          
+          try {
+            await bot.sendMessage(chatId, `📝 *Transcription:*\n\n${transcription}\n\n💬 _You can now ask questions about this audio!_`);
           } catch (error) {
             logger.error('Failed to send transcription message', { chatId, error: error.message });
           }
@@ -300,6 +334,43 @@ Just upload your audio file and I'll handle the rest!`);
         });
         try {
           await bot.sendMessage(chatId, '❌ Failed to process audio file. Please try again.');
+        } catch (sendError) {
+          logger.error('Failed to send error message', { chatId, error: sendError.message });
+        }
+      }
+    } else if (message.text && !message.text.startsWith('/')) {
+      // Handle text messages as potential chat questions about transcriptions
+      try {
+        const conversation = await conversationService.getConversation(chatId);
+        
+        if (conversationService.hasRecentTranscriptions(conversation)) {
+          // Store user message
+          await conversationService.addUserMessage(chatId, message.text, message.message_id);
+          
+          // Send typing indicator
+          await bot.sendMessage(chatId, '🤔 _Thinking..._');
+          
+          // Get conversation context for LLM
+          const contextMessages = conversationService.getContextForLLM(conversation);
+          
+          try {
+            const response = await getChatCompletion(contextMessages, env.OPENAI_API_KEY, logger);
+            await conversationService.addBotResponse(chatId, response);
+            await bot.sendMessage(chatId, response);
+          } catch (chatError) {
+            logger.error('Failed to get chat completion', { chatId, error: chatError.message });
+            const fallbackResponse = '❌ Sorry, I encountered an error processing your question. Please try again.';
+            await conversationService.addBotResponse(chatId, fallbackResponse);
+            await bot.sendMessage(chatId, fallbackResponse);
+          }
+        } else {
+          // No recent transcriptions, suggest sending audio first
+          await bot.sendMessage(chatId, '💡 _Send me an audio file first, then you can ask questions about it!_');
+        }
+      } catch (error) {
+        logger.error('Failed to handle text message', { chatId, error: error.message });
+        try {
+          await bot.sendMessage(chatId, '❌ Failed to process your message. Please try again.');
         } catch (sendError) {
           logger.error('Failed to send error message', { chatId, error: sendError.message });
         }

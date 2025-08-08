@@ -5,9 +5,11 @@ A Telegram bot that transcribes M4A audio files using OpenAI's Whisper API, depl
 ## Features
 
 - 🎙️ **Audio Transcription**: Converts M4A audio files to text using OpenAI Whisper
+- 💬 **AI Chat**: Ask questions about your transcriptions using GPT-3.5-turbo
 - ⚡ **Serverless**: Runs on Cloudflare Workers for fast global performance
 - 📱 **Telegram Integration**: Simple bot interface for easy file uploads
 - 🔄 **Smart Message Splitting**: Automatically splits long transcriptions into readable parts
+- 💾 **Conversation Context**: Maintains chat history with Cloudflare KV storage
 - 📊 **Structured Logging**: Comprehensive logging with request tracking
 - 🌍 **Multi-language Support**: Whisper supports 99+ languages
 - 💰 **Cost Effective**: Pay-per-use pricing with Cloudflare Workers
@@ -38,6 +40,12 @@ A Telegram bot that transcribes M4A audio files using OpenAI's Whisper API, depl
    ```bash
    cp .env.example .env
    # Edit wrangler.toml with your tokens (for development)
+   ```
+
+4. **Create KV namespace for conversation storage**
+   ```bash
+   npx wrangler kv namespace create CONVERSATIONS
+   # Copy the namespace ID and update wrangler.toml
    ```
 
 ### Development
@@ -93,9 +101,29 @@ A Telegram bot that transcribes M4A audio files using OpenAI's Whisper API, depl
 
 ## Usage
 
+### Basic Audio Transcription
+
 1. **Start the bot**: Send `/start` to your Telegram bot
 2. **Upload audio**: Send an M4A audio file (up to 25MB)
 3. **Get transcription**: Receive the transcribed text automatically
+
+### AI Chat with Transcriptions
+
+4. **Ask questions**: After transcription, send text messages to ask questions about the audio
+5. **Get AI responses**: The bot uses GPT-3.5-turbo to answer based on your transcription context
+6. **Multiple audios**: Send more audio files to extend the conversation context
+
+**Example conversation:**
+```
+👤 [Sends audio file]
+🤖 📝 Transcription: "The meeting discussed quarterly sales targets..."
+
+👤 What were the main action items?
+🤖 Based on the transcription, the main action items were...
+
+👤 Who was responsible for the Q4 targets?
+🤖 According to the discussion, John was assigned...
+```
 
 ### Supported Commands
 
@@ -110,11 +138,14 @@ A Telegram bot that transcribes M4A audio files using OpenAI's Whisper API, depl
 
 ## Architecture
 
+### Audio Transcription Flow
+
 ```mermaid
 sequenceDiagram
     participant U as User
     participant T as Telegram
     participant CW as Cloudflare Worker
+    participant KV as Cloudflare KV
     participant OAI as OpenAI Whisper API
 
     U->>T: Send M4A audio file
@@ -124,9 +155,32 @@ sequenceDiagram
     CW->>T: Download file via getFile API
     CW->>OAI: Send audio to Whisper API
     OAI-->>CW: Return transcription text
+    CW->>KV: Store transcription in conversation context
     CW->>CW: Split long messages if needed
-    CW->>T: Send transcription to user
+    CW->>T: Send transcription + "You can ask questions!" to user
     T->>U: Display transcription
+```
+
+### AI Chat Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant T as Telegram
+    participant CW as Cloudflare Worker
+    participant KV as Cloudflare KV
+    participant GPT as OpenAI GPT-3.5-turbo
+
+    U->>T: Send text question
+    T->>CW: POST webhook with message
+    CW->>KV: Get conversation context
+    KV-->>CW: Return transcription + chat history
+    CW->>T: Send "Thinking..." message
+    CW->>GPT: Send context + question to ChatGPT
+    GPT-->>CW: Return AI response
+    CW->>KV: Store user question + AI response
+    CW->>T: Send AI response to user
+    T->>U: Display response
 ```
 
 ## Configuration
@@ -136,7 +190,8 @@ sequenceDiagram
 | Variable | Description | Required |
 |----------|-------------|----------|
 | `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather | ✅ |
-| `OPENAI_API_KEY` | OpenAI API key | ✅ |
+| `OPENAI_API_KEY` | OpenAI API key (Whisper + GPT-3.5-turbo) | ✅ |
+| `CONVERSATIONS` | Cloudflare KV namespace binding | ✅ |
 | `LOG_LEVEL` | Logging level (ERROR, WARN, INFO, DEBUG) | ❌ |
 | `NODE_ENV` | Environment (development, production) | ❌ |
 
@@ -145,6 +200,8 @@ sequenceDiagram
 - **File Size**: 25MB (Whisper API limit)
 - **Message Length**: 4096 characters (auto-split for longer texts)
 - **Processing Time**: ~30-60 seconds for typical audio files
+- **Conversation Context**: 30-minute window for chat relevance
+- **Context Storage**: 7-day TTL for conversation history
 
 ## Logging
 
@@ -168,9 +225,14 @@ The application provides structured JSON logging with:
 - **Free Tier**: 100,000 requests/day
 - **Paid**: $0.50 per million requests
 
-### OpenAI Whisper API
-- **Price**: $0.006 per minute of audio
-- **Example**: 10-minute audio = $0.06
+### OpenAI API Costs
+- **Whisper**: $0.006 per minute of audio
+- **GPT-3.5-turbo**: $0.0015 per 1K input tokens, $0.002 per 1K output tokens
+- **Example**: 10-minute audio + 5 chat questions ≈ $0.10
+
+### Cloudflare KV Storage
+- **Free Tier**: 1GB storage, 100K reads/day, 1K writes/day
+- **Paid**: $0.50 per GB/month, $0.50 per million reads
 
 ## Troubleshooting
 
@@ -192,6 +254,14 @@ The application provides structured JSON logging with:
    - Ensure audio contains clear speech
    - Check audio isn't corrupted or silent
 
+5. **"Send audio file first"**
+   - Chat requires recent transcription (30-minute window)
+   - Upload audio before asking questions
+
+6. **Chat responses seem unrelated**
+   - Conversation context may have expired
+   - Send fresh audio to reset context
+
 ### Debugging
 
 Enable debug logging:
@@ -212,9 +282,15 @@ npx wrangler tail
 ```
 m4a-to-notes/
 ├── src/
-│   ├── index.js          # Main Cloudflare Worker
-│   └── logger.js         # Structured logging utility
-├── wrangler.toml         # Worker configuration
+│   ├── index.js              # Main Cloudflare Worker entry point
+│   ├── logger.js             # Structured logging utility
+│   ├── handlers/
+│   │   └── telegram.js       # Telegram bot logic & message handlers
+│   └── services/
+│       ├── transcription.js  # OpenAI Whisper integration
+│       ├── conversation.js   # KV-based conversation management
+│       └── chat.js          # OpenAI GPT-3.5-turbo integration
+├── wrangler.toml            # Worker configuration + KV binding
 ├── package.json
 ├── .env.example
 └── README.md
@@ -222,10 +298,12 @@ m4a-to-notes/
 
 ### Adding Features
 
-1. **New Commands**: Add handlers in `handleTelegramUpdate()`
-2. **File Formats**: Extend validation in file processing
-3. **Custom Responses**: Modify message templates
-4. **Error Handling**: Add specific error cases
+1. **New Commands**: Add handlers in `telegram.js:handleTelegramUpdate()`
+2. **File Formats**: Extend validation in file processing logic
+3. **Custom Responses**: Modify message templates in telegram handler
+4. **Chat Enhancements**: Extend `ConversationService` methods
+5. **AI Model Changes**: Update `chat.js` for different OpenAI models
+6. **Storage Options**: Modify conversation retention in KV service
 
 ## Contributing
 

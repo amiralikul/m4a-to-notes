@@ -13,7 +13,7 @@ export async function transcribeAudio(audioBuffer, openaiKey, logger) {
   try {
     const transcription = await openai.audio.transcriptions.create({
       file: new File([audioBuffer], 'audio.m4a', { type: 'audio/m4a' }),
-      model: 'whisper-1',
+      model: 'gpt-4o-mini-transcribe',
     });
     
     const duration = Date.now() - startTime;

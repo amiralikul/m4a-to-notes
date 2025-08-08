@@ -2,6 +2,10 @@ name = "m4a-to-notes"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
+[[kv_namespaces]]
+binding = "CONVERSATIONS"
+id = "37462871a7824d94985cbbdcdb4baf08"
+
 [vars]
 NODE_ENV = "production"
 LOG_LEVEL = "INFO"
