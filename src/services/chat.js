@@ -1,13 +1,14 @@
-export async function getChatCompletion(messages, apiKey, logger) {
+import OpenAI from 'openai';
+
+async function getChatCompletion(messages, apiKey, logger) {
   logger.debug('Requesting chat completion from OpenAI', { messageCount: messages.length });
   
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  const openai = new OpenAI({
+    apiKey: apiKey,
+  });
+
+  try {
+    const completion = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [
         {
@@ -18,25 +19,23 @@ export async function getChatCompletion(messages, apiKey, logger) {
       ],
       max_tokens: 1000,
       temperature: 0.7
-    })
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json();
-    logger.error('OpenAI chat completion failed', { 
-      status: response.status,
-      error: errorData 
     });
-    throw new Error(`OpenAI API error: ${errorData.error?.message || 'Unknown error'}`);
-  }
 
-  const data = await response.json();
-  const completion = data.choices[0]?.message?.content || '';
-  
-  logger.info('Chat completion received', { 
-    completionLength: completion.length,
-    tokensUsed: data.usage?.total_tokens || 0
-  });
-  
-  return completion;
+    const responseContent = completion.choices[0]?.message?.content || '';
+    
+    logger.info('Chat completion received', { 
+      completionLength: responseContent.length,
+      tokensUsed: completion.usage?.total_tokens || 0
+    });
+    
+    return responseContent;
+  } catch (error) {
+    logger.error('OpenAI chat completion failed', { 
+      error: error.message,
+      status: error.status
+    });
+    throw new Error(`OpenAI API error: ${error.message}`);
+  }
 }
+
+export { getChatCompletion };
