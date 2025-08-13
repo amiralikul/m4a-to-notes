@@ -11,8 +11,9 @@
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module", 
+  "type": "module",
   "dependencies": {
+    "grammy": "^1.37.0",
     "hono": "^4.6.8",
     "openai": "^5.11.0"
   },

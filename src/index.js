@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import Logger from './logger.js';
-import { handleTelegramWebhook } from './handlers/telegram.js';
 import { handleTranscription, handleHealthCheck } from './handlers/api.js';
+import { handleTelegramWebhook } from './handlers/telegram.js';
 
 const app = new Hono();
 
