@@ -1,4 +1,3 @@
-import Logger from '../logger.js';
 import { transcribeAudio } from '../services/transcription.js';
 import { ConversationService } from '../services/conversation.js';
 import { getChatCompletion } from '../services/chat.js';
@@ -181,8 +180,27 @@ class TelegramBot {
 const processedUpdates = new Set();
 const processedFiles = new Set();
 
-export async function handleTelegramUpdate(update, env) {
-  const logger = new Logger(env.LOG_LEVEL || 'INFO');
+export async function handleTelegramWebhook(c) {
+  const logger = c.get('logger');
+  const requestId = c.get('requestId');
+  
+  try {
+    const update = await c.req.json();
+    await handleTelegramUpdate(update, c.env, logger, requestId);
+    
+    logger.info('Telegram webhook processed successfully', { requestId });
+    return c.text('OK', 200);
+  } catch (error) {
+    logger.error('Telegram webhook processing failed', { 
+      requestId,
+      error: error.message,
+      stack: error.stack
+    });
+    return c.text('Error', 500);
+  }
+}
+
+export async function handleTelegramUpdate(update, env, logger, requestId) {
   const bot = new TelegramBot(env.TELEGRAM_BOT_TOKEN, logger);
   const conversationService = new ConversationService(env.CONVERSATIONS, logger);
   
