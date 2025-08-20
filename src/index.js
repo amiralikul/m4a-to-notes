@@ -2,8 +2,9 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import Logger from './logger.js';
-import { handleTranscription, handleHealthCheck } from './handlers/api.js';
+import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleDebugJobs, handleProcessJob, handleCheckFile } from './handlers/api.js';
 import { handleTelegramWebhook } from './handlers/telegram.js';
+import { handleQueueMessage } from './services/queueConsumer.js';
 
 const app = new Hono();
 
@@ -35,6 +36,17 @@ app.use('*', honoLogger());
 // API Routes
 app.get('/api/health', handleHealthCheck);
 app.post('/api/transcribe', handleTranscription);
+
+// New async API routes
+app.post('/api/uploads', handleUploads);
+app.post('/api/jobs', handleCreateJob);
+app.get('/api/jobs/:jobId', handleGetJob);
+app.get('/api/transcripts/:jobId', handleGetTranscript);
+
+// Debug routes
+app.get('/api/debug/jobs', handleDebugJobs);
+app.post('/api/debug/process/:jobId', handleProcessJob);
+app.get('/api/debug/file/:objectKey', handleCheckFile);
 
 // Telegram webhook route
 app.post('/', handleTelegramWebhook);
@@ -88,4 +100,16 @@ app.onError((err, c) => {
   return c.text('Internal Server Error', 500);
 });
 
-export default app;
+export default {
+  // Expose Hono's fetch handler
+  fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+  // Export queue handler for Cloudflare Workers
+  async queue(batch, env, ctx) {
+    try {
+      await handleQueueMessage(batch, env, ctx);
+    } catch (error) {
+      console.error('Queue handler error:', error);
+      throw error;
+    }
+  }
+};

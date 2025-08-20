@@ -1,13 +1,41 @@
 name = "m4a-to-notes"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+account_id = "e2c1e0edd19dc5cd47f9acd256ba94ec"
 
 [[kv_namespaces]]
 binding = "CONVERSATIONS"
 id = "37462871a7824d94985cbbdcdb4baf08"
 
+[[kv_namespaces]]
+binding = "JOBS"
+id = "8837ef40371245b4ac1d70bbc81c9831"
+
+[[r2_buckets]]
+binding = "M4A_BUCKET"
+bucket_name = "m4a-to-notes"
+
+[[queues.producers]]
+binding = "QUEUE"
+queue = "transcribe"
+
+[[queues.consumers]]
+queue = "transcribe"
+max_batch_size = 5
+max_batch_timeout = 5
+
 [vars]
 NODE_ENV = "production"
 LOG_LEVEL = "INFO"
-TELEGRAM_BOT_TOKEN = "your_telegram_bot_token_here"
-OPENAI_API_KEY = "your_openai_api_key_here"
+# Non-sensitive R2 configuration
+R2_ENDPOINT = "https://e2c1e0edd19dc5cd47f9acd256ba94ec.r2.cloudflarestorage.com"
+R2_BUCKET_NAME = "m4a-to-notes"
+R2_REGION = "auto"
+
+# Secrets should be set using: npx wrangler secret put SECRET_NAME
+# Required secrets:
+# - TELEGRAM_BOT_TOKEN
+# - OPENAI_API_KEY  
+# - R2_ACCESS_KEY_ID
+# - R2_SECRET_ACCESS_KEY
+
