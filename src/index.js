@@ -4,6 +4,8 @@ import { logger as honoLogger } from 'hono/logger';
 import Logger from './logger.js';
 import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleDebugJobs, handleProcessJob, handleCheckFile } from './handlers/api.js';
 import { handleTelegramWebhook } from './handlers/telegram.js';
+import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users.js';
+import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle.js';
 import { handleQueueMessage } from './services/queueConsumer.js';
 
 const app = new Hono();
@@ -27,7 +29,7 @@ app.use('*', async (c, next) => {
 app.use('/api/*', cors({
   origin: '*',
   allowMethods: ['GET', 'POST', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization']
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Internal-Secret']
 }));
 
 // Hono built-in request logging
@@ -42,6 +44,16 @@ app.post('/api/uploads', handleUploads);
 app.post('/api/jobs', handleCreateJob);
 app.get('/api/jobs/:jobId', handleGetJob);
 app.get('/api/transcripts/:jobId', handleGetTranscript);
+
+// Paddle routes
+app.post('/api/webhook', handlePaddleWebhook);
+app.post('/api/paddle/portal', handleCustomerPortal);
+app.post('/api/paddle/cancel', handleSubscriptionCancel);
+
+// Entitlements routes (internal only)
+app.post('/api/entitlements/sync', handleSyncEntitlements);
+app.get('/api/entitlements/:userId', handleGetEntitlements);
+app.get('/api/entitlements/:userId/access/:feature', handleCheckAccess);
 
 // Debug routes
 app.get('/api/debug/jobs', handleDebugJobs);

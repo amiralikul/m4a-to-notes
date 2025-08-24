@@ -119,6 +119,7 @@ export async function handleGetEntitlements(c) {
 
     // Initialize users service
     const users = new UsersService(c.env.ENTITLEMENTS, logger);
+    console.log({ users });
     
     // Get entitlements with defaults for new users
     const entitlements = await users.getWithDefaults(userId);
