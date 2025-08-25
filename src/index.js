@@ -43,6 +43,8 @@ app.post('/api/transcribe', handleTranscription);
 // New async API routes
 app.post('/api/uploads', handleUploads);
 app.post('/api/jobs', handleCreateJob);
+app.post('/api/jobs/', handleCreateJob);
+
 app.get('/api/jobs/:jobId', handleGetJob);
 app.get('/api/transcripts/:jobId', handleGetTranscript);
 
