@@ -5,8 +5,19 @@
 
 import { transcribeAudio } from './transcription.js';
 import { StorageService } from './storage.js';
-import { JobsService, JobStatus } from './jobs.js';
+import { JobsService } from './jobs.js';
 import { sendTelegramMessage } from './telegram.js';
+import { UsersService } from './users.js';
+import { 
+  SUBSCRIPTION_PLANS, 
+  SUBSCRIPTION_STATUS,
+  SUBSCRIPTION_PROVIDERS,
+  QUEUE_MESSAGE_TYPES,
+  WEBHOOK_EVENT_TYPES,
+  mapPaddleStatus,
+  mapPaddlePriceToPlan,
+  getPlanHierarchyValue
+} from '../constants/plans.js';
 
 export class TranscriptionQueueConsumer {
   constructor(env, logger) {
@@ -183,12 +194,179 @@ export class TranscriptionQueueConsumer {
 }
 
 /**
+ * Paddle Webhook Queue Consumer
+ * Handles async processing of Paddle webhook events
+ */
+export class PaddleWebhookQueueConsumer {
+  constructor(env, logger) {
+    this.env = env;
+    this.logger = logger;
+    this.users = new UsersService(env.ENTITLEMENTS, logger);
+  }
+
+  /**
+   * Process a Paddle webhook event from the queue
+   * @param {Object} message - Queue message
+   * @param {string} message.eventId - Paddle event ID
+   * @param {string} message.eventType - Event type
+   * @param {Object} message.subscription - Subscription data
+   * @param {string} message.requestId - Request ID for tracing
+   */
+  async processPaddleWebhook(message) {
+    const { eventId, eventType, subscription, requestId } = message;
+    
+    this.logger.info('Processing Paddle webhook from queue', {
+      eventId,
+      eventType,
+      subscriptionId: subscription?.id,
+      requestId
+    });
+
+    try {
+      // Process the subscription event
+      await this.syncEntitlements(subscription, eventType, requestId);
+      
+      this.logger.info('Paddle webhook processed successfully from queue', {
+        eventId,
+        eventType,
+        subscriptionId: subscription?.id,
+        requestId
+      });
+
+    } catch (error) {
+      this.logger.error('Paddle webhook queue processing failed', {
+        eventId,
+        eventType,
+        subscriptionId: subscription?.id,
+        requestId,
+        error: error.message,
+        stack: error.stack
+      });
+
+      throw error;
+    }
+  }
+
+  /**
+   * Sync subscription data to entitlements (moved from paddle.js handler)
+   */
+  async syncEntitlements(subscription, eventType, requestId) {
+    // Extract userId from custom_data
+    const userId = subscription.custom_data?.clerkUserId;
+    
+    if (!userId) {
+      this.logger.warn('No clerkUserId in custom_data, skipping sync', {
+        requestId,
+        subscriptionId: subscription.id
+      });
+      return;
+    }
+    
+    // Map subscription to plan and status
+    let plan = SUBSCRIPTION_PLANS.FREE;
+    let status = SUBSCRIPTION_STATUS.NONE;
+    
+    if (eventType === WEBHOOK_EVENT_TYPES.SUBSCRIPTION_CANCELED) {
+      plan = SUBSCRIPTION_PLANS.FREE;
+      status = SUBSCRIPTION_STATUS.CANCELED;
+    } else {
+      // Map subscription status using utility function
+      status = mapPaddleStatus(subscription.status);
+
+      // Map subscription items to plan
+      if (subscription.items && subscription.items.length > 0) {
+        const priceId = subscription.items[0].price?.id;
+        
+        plan = mapPaddlePriceToPlan(priceId, this.env.BUSINESS_PRICE_ID);
+      }
+    }
+    
+    // Prepare metadata
+    const meta = {
+      subscriptionId: subscription.id,
+      customerId: subscription.customer_id,
+      currency: subscription.currency_code || 'USD',
+      name: subscription.items?.[0]?.name || 'Unknown',
+      priceId: subscription.items?.[0]?.price?.id || 'Unknown',
+    };
+    
+    if (subscription.items?.[0]?.price) {
+      meta.unitPrice = subscription.items[0].price.unit_price?.amount;
+    }
+    
+    if (subscription.current_billing_period?.ends_at) {
+      meta.periodEnd = subscription.current_billing_period.ends_at;
+    }
+    
+    // Check for subscription conflicts before updating entitlements
+    const existingEntitlements = await this.users.get(userId);
+    
+    // Detect multiple active subscriptions conflict
+    const hasActiveExisting = existingEntitlements && 
+      [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIALING].includes(existingEntitlements.status) &&
+      existingEntitlements.meta?.subscriptionId !== subscription.id;
+      
+    const hasActiveNew = [SUBSCRIPTION_STATUS.ACTIVE, SUBSCRIPTION_STATUS.TRIALING].includes(status);
+    
+    if (hasActiveExisting && hasActiveNew) {
+      this.logger.warn('Multiple active subscriptions detected for user', {
+        requestId,
+        userId,
+        existingSubscription: existingEntitlements.meta?.subscriptionId,
+        newSubscription: subscription.id,
+        existingPlan: existingEntitlements.plan,
+        newPlan: plan
+      });
+      
+      // Conflict resolution: keep higher-value subscription
+      const existingValue = getPlanHierarchyValue(existingEntitlements.plan);
+      const newValue = getPlanHierarchyValue(plan);
+      
+      if (newValue <= existingValue) {
+        this.logger.info('Keeping existing higher-value subscription, skipping update', {
+          requestId,
+          userId,
+          keptPlan: existingEntitlements.plan,
+          skippedPlan: plan
+        });
+        
+        return existingEntitlements; // Don't update, keep existing
+      } else {
+        this.logger.info('New subscription has higher value, updating entitlements', {
+          requestId,
+          userId,
+          previousPlan: existingEntitlements.plan,
+          newPlan: plan
+        });
+      }
+    }
+    
+    // Update entitlements in KV
+    const entitlements = await this.users.set(userId, {
+      plan,
+      status,
+      provider: SUBSCRIPTION_PROVIDERS.PADDLE,
+      meta
+    });
+    
+    this.logger.info('Entitlements synced from queued webhook', {
+      requestId,
+      userId,
+      plan: entitlements.plan,
+      status: entitlements.status,
+      subscriptionId: subscription.id
+    });
+  }
+}
+
+/**
  * Queue consumer handler for Cloudflare Workers
  * This function will be called by the Cloudflare Workers runtime for each queued message
  */
-export async function handleQueueMessage(batch, env, ctx) {
+export async function handleQueueMessage(batch, env) {
   const logger = new (await import('../logger.js')).default(env.LOG_LEVEL || 'INFO');
-  const consumer = new TranscriptionQueueConsumer(env, logger);
+  const transcriptionConsumer = new TranscriptionQueueConsumer(env, logger);
+  const paddleConsumer = new PaddleWebhookQueueConsumer(env, logger);
 
   // Process each message in the batch
   for (const message of batch.messages) {
@@ -197,11 +375,19 @@ export async function handleQueueMessage(batch, env, ctx) {
       
       logger.info('Processing queue message', {
         messageId: message.id,
+        messageType: messageData.type || 'transcription',
         jobId: messageData.jobId,
+        eventId: messageData.eventId,
         attempts: message.attempts
       });
 
-      await consumer.processTranscriptionJob(messageData);
+      // Route message to appropriate consumer based on type
+      if (messageData.type === QUEUE_MESSAGE_TYPES.PADDLE_WEBHOOK) {
+        await paddleConsumer.processPaddleWebhook(messageData);
+      } else {
+        // Default to transcription job processing
+        await transcriptionConsumer.processTranscriptionJob(messageData);
+      }
       
       // Acknowledge successful processing
       message.ack();
@@ -209,6 +395,7 @@ export async function handleQueueMessage(batch, env, ctx) {
     } catch (error) {
       logger.error('Queue message processing failed', {
         messageId: message.id,
+        messageType: messageData?.type || 'transcription',
         attempts: message.attempts,
         error: error.message,
         stack: error.stack
@@ -221,7 +408,9 @@ export async function handleQueueMessage(batch, env, ctx) {
         // Max retries reached, send to dead letter queue or acknowledge to remove
         logger.error('Max retries reached for message', {
           messageId: message.id,
-          jobId: messageData?.jobId
+          messageType: messageData?.type || 'transcription',
+          jobId: messageData?.jobId,
+          eventId: messageData?.eventId
         });
         message.ack(); // Remove from queue after max retries
       }

@@ -7,6 +7,7 @@ import { handleTelegramWebhook } from './handlers/telegram.js';
 import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users.js';
 import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle.js';
 import { handleQueueMessage } from './services/queueConsumer.js';
+import { handleManualReconciliation, handleScheduledReconciliation } from './handlers/reconciliation.js';
 
 const app = new Hono();
 
@@ -54,6 +55,9 @@ app.post('/api/paddle/cancel', handleSubscriptionCancel);
 app.post('/api/entitlements/sync', handleSyncEntitlements);
 app.get('/api/entitlements/:userId', handleGetEntitlements);
 app.get('/api/entitlements/:userId/access/:feature', handleCheckAccess);
+
+// Reconciliation routes (internal only)
+app.get('/api/reconcile', handleManualReconciliation);
 
 // Debug routes
 app.get('/api/debug/jobs', handleDebugJobs);
@@ -121,6 +125,16 @@ export default {
       await handleQueueMessage(batch, env, ctx);
     } catch (error) {
       console.error('Queue handler error:', error);
+      throw error;
+    }
+  },
+  // Export scheduled handler for cron triggers
+  async scheduled(_, env, ctx) {
+    try {
+      // Run reconciliation daily at 2 AM UTC
+      await handleScheduledReconciliation(env, ctx);
+    } catch (error) {
+      console.error('Scheduled reconciliation error:', error);
       throw error;
     }
   }

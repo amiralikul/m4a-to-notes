@@ -11,13 +11,13 @@ id = "37462871a7824d94985cbbdcdb4baf08"
 binding = "JOBS"
 id = "8837ef40371245b4ac1d70bbc81c9831"
 
-[[kv_namespaces]]
-binding = "ENTITLEMENTS"
-id = "a66512c3666e4f52b31465224b97485e"
-
 [[r2_buckets]]
 binding = "M4A_BUCKET"
 bucket_name = "m4a-to-notes"
+
+[[kv_namespaces]]
+binding = "ENTITLEMENTS"
+id = "342f8d83f226463796e72d7be214fe16"
 
 [[queues.producers]]
 binding = "QUEUE"
@@ -27,6 +27,11 @@ queue = "transcribe"
 queue = "transcribe"
 max_batch_size = 5
 max_batch_timeout = 5
+
+
+
+[triggers]
+crons = ["0 2 * * *"]  # Run reconciliation daily at 2 AM UTC
 
 [vars]
 NODE_ENV = "production"
