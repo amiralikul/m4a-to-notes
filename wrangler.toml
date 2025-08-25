@@ -3,6 +3,9 @@ main = "src/index.js"
 compatibility_date = "2024-01-01"
 account_id = "e2c1e0edd19dc5cd47f9acd256ba94ec"
 
+compatibility_flags = ["nodejs_compat"]
+
+
 [[kv_namespaces]]
 binding = "CONVERSATIONS"
 id = "37462871a7824d94985cbbdcdb4baf08"
@@ -29,9 +32,16 @@ max_batch_size = 5
 max_batch_timeout = 5
 
 
-
 [triggers]
 crons = ["0 2 * * *"]  # Run reconciliation daily at 2 AM UTC
+
+# wrangler.toml (wrangler v3.88.0^)
+[observability.logs]
+enabled = true
+
+
+
+
 
 [vars]
 NODE_ENV = "production"
