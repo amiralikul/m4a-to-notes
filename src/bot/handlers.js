@@ -143,6 +143,12 @@ async function handleFileProcessing(ctx, fileInfo, env) {
     
     const audioBuffer = await response.arrayBuffer();
     
+    ctx.logger.info('AudioBuffer created from Telegram file', {
+      byteLength: audioBuffer.byteLength,
+      type: 'ArrayBuffer',
+      chatId
+    });
+    
     // Transcribe audio
     const transcription = await transcribeAudio(audioBuffer, env.OPENAI_API_KEY, ctx.logger);
     

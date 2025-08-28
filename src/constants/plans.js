@@ -47,8 +47,7 @@ export const WEBHOOK_EVENT_TYPES = {
 };
 
 export const QUEUE_MESSAGE_TYPES = {
-  TRANSCRIPTION: 'transcription',
-  PADDLE_WEBHOOK: 'paddle_webhook'
+  TRANSCRIPTION: 'transcription'
 };
 
 /**

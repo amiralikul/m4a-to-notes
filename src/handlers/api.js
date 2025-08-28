@@ -63,6 +63,12 @@ export async function handleTranscription(c) {
     
     // Convert file to array buffer
     const arrayBuffer = await audioFile.arrayBuffer();
+
+    logger.info('ArrayBuffer created', {
+      byteLength: arrayBuffer.byteLength,
+      type: 'ArrayBuffer',
+      requestId
+    });
     
     // Transcribe the audio
     const transcription = await transcribeAudio(arrayBuffer, c.env.OPENAI_API_KEY, logger);
@@ -516,7 +522,6 @@ export async function handleGetTranscript(c) {
 
     // Initialize services
     const jobs = new JobsService(c.env.JOBS, logger);
-    const storage = new StorageService(c.env.M4A_BUCKET, logger, c.env);
     
     // Get job
     const job = await jobs.getJob(jobId);
@@ -528,16 +533,17 @@ export async function handleGetTranscript(c) {
       }, 404);
     }
 
-    if (job.status !== 'completed' || !job.transcriptObjectKey) {
+    if (job.status !== 'completed' || !job.result?.transcription) { 
       return c.json({
         error: 'Transcript not available',
         requestId
       }, 404);
     }
 
-    // Get transcript content
-    const transcriptContent = await storage.downloadContent(job.transcriptObjectKey);
-    const transcriptText = new TextDecoder().decode(transcriptContent);
+    // Get transcript content 
+    // const transcriptContent = await storage.downloadContent(job.transcriptObjectKey);
+    // const transcriptText = new TextDecoder().decode(transcriptContent);
+    const transcriptText = job.result.transcription;
 
     return c.text(transcriptText, 200, {
       'Content-Type': 'text/plain; charset=utf-8',

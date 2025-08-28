@@ -11,6 +11,7 @@ export async function transcribeAudio(audioBuffer, openaiKey, logger) {
   const startTime = Date.now();
   
   try {
+
     const transcription = await openai.audio.transcriptions.create({
       file: new File([audioBuffer], 'audio.m4a', { type: 'audio/m4a' }),
       model: 'gpt-4o-mini-transcribe',

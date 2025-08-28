@@ -32,8 +32,7 @@ max_batch_size = 5
 max_batch_timeout = 5
 
 
-[triggers]
-crons = ["0 2 * * *"]  # Run reconciliation daily at 2 AM UTC
+# No cron triggers needed with canonical sync approach
 
 # wrangler.toml (wrangler v3.88.0^)
 [observability.logs]
