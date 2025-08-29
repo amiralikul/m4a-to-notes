@@ -1,4 +1,7 @@
 import { AwsClient } from 'aws4fetch';
+import { UploadResult } from '../types';
+import { getErrorMessage } from '../utils/errors';
+import Logger from '../logger';
 
 /**
  * R2 Storage Service
@@ -6,13 +9,19 @@ import { AwsClient } from 'aws4fetch';
  */
 
 export class StorageService {
-  constructor(bucket, logger, env) {
+  private bucket: R2Bucket;
+  private logger: Logger;
+  private env: Env;
+  private awsClient: AwsClient | null = null;
+  private r2Endpoint?: string;
+  private bucketName?: string;
+
+  constructor(bucket: R2Bucket, logger: Logger, env: Env) {
     this.bucket = bucket;
     this.logger = logger;
     this.env = env;
     
     // Initialize AWS client for presigned URLs if credentials are available
-    this.awsClient = null;
     if (env?.R2_ACCESS_KEY_ID && env?.R2_SECRET_ACCESS_KEY && env?.R2_ENDPOINT) {
       this.awsClient = new AwsClient({
         accessKeyId: env.R2_ACCESS_KEY_ID,
@@ -31,7 +40,7 @@ export class StorageService {
    * @param {number} expiresIn - URL expiration time in seconds (default: 1 hour)
    * @returns {Promise<{uploadUrl: string, objectKey: string, expiresAt: string}>}
    */
-  async generatePresignedUploadUrl(fileName, contentType, expiresIn = 3600) {
+  async generatePresignedUploadUrl(fileName: string, contentType: string, expiresIn: number = 3600): Promise<{uploadUrl: string, objectKey: string, expiresAt: string}> {
     try {
       // Check if bucket is available (for development)
       if (!this.bucket) {
@@ -65,7 +74,6 @@ export class StorageService {
       // Generate presigned URL using aws4fetch
       const signedRequest = await this.awsClient.sign(request, {
         aws: { signQuery: true },
-        signQuery: true,
         expiresIn,
       });
 
@@ -89,7 +97,7 @@ export class StorageService {
       this.logger.error('Failed to generate presigned URL', {
         fileName,
         contentType,
-        error: error.message
+        error: getErrorMessage(error)
       });
       throw error;
     }
@@ -101,7 +109,7 @@ export class StorageService {
    * @param {number} expiresIn - URL expiration time in seconds (default: 1 hour)
    * @returns {Promise<string>} Presigned download URL
    */
-  async generatePresignedDownloadUrl(objectKey, expiresIn = 3600) {
+  async generatePresignedDownloadUrl(objectKey: string, expiresIn: number = 3600): Promise<string> {
     try {
       // Check if AWS client is available for presigned URLs
       if (!this.awsClient) {
@@ -119,7 +127,6 @@ export class StorageService {
       // Generate presigned URL using aws4fetch
       const signedRequest = await this.awsClient.sign(request, {
         aws: { signQuery: true },
-        signQuery: true,
         expiresIn,
       });
 
@@ -135,7 +142,7 @@ export class StorageService {
     } catch (error) {
       this.logger.error('Failed to generate presigned download URL', {
         objectKey,
-        error: error.message
+        error: getErrorMessage(error)
       });
       throw error;
     }
@@ -148,10 +155,12 @@ export class StorageService {
    * @param {string} contentType - MIME type
    * @returns {Promise<void>}
    */
-  async uploadContent(objectKey, content, contentType) {
+  async uploadContent(objectKey: string, content: string | ArrayBuffer | Blob, contentType: string): Promise<void> {
     try {
       await this.bucket.put(objectKey, content, {
-        contentType
+        httpMetadata: {
+          contentType
+        }
       });
 
       this.logger.info('Content uploaded to R2', {
@@ -163,7 +172,7 @@ export class StorageService {
       this.logger.error('Failed to upload content to R2', {
         objectKey,
         contentType,
-        error: error.message
+        error: getErrorMessage(error)
       });
       throw error;
     }
@@ -174,7 +183,7 @@ export class StorageService {
    * @param {string} objectKey - R2 object key
    * @returns {Promise<ArrayBuffer>} File content
    */
-  async downloadContent(objectKey) {
+  async downloadContent(objectKey: string): Promise<ArrayBuffer> {
     try {
       // Try via binding with a few short retries to account for brief propagation delays
       const maxAttempts = 3;
@@ -199,7 +208,6 @@ export class StorageService {
         const url = new URL(`${this.r2Endpoint}/${this.bucketName}/${objectKey}`);
         const signed = await this.awsClient.sign(new Request(url, { method: 'GET' }), {
           aws: { signQuery: true },
-          signQuery: true,
         });
         const res = await fetch(signed);
         if (!res.ok) {
@@ -218,7 +226,7 @@ export class StorageService {
     } catch (error) {
       this.logger.error('Failed to download content from R2', {
         objectKey,
-        error: error.message
+        error: getErrorMessage(error)
       });
       throw error;
     }
@@ -229,7 +237,7 @@ export class StorageService {
    * @param {string} objectKey - R2 object key
    * @returns {Promise<boolean>}
    */
-  async objectExists(objectKey) {
+  async objectExists(objectKey: string): Promise<boolean> {
     try {
       const object = await this.bucket.head(objectKey);
       if (object !== null) return true;
@@ -239,7 +247,6 @@ export class StorageService {
         const url = new URL(`${this.r2Endpoint}/${this.bucketName}/${objectKey}`);
         const signed = await this.awsClient.sign(new Request(url, { method: 'HEAD' }), {
           aws: { signQuery: true },
-          signQuery: true,
         });
         const res = await fetch(signed);
         return res.ok;
@@ -247,7 +254,7 @@ export class StorageService {
 
       return false;
     } catch (error) {
-      if (error.message.includes('not found') || error.message.includes('NoSuchKey')) {
+      if (getErrorMessage(error).includes('not found') || getErrorMessage(error).includes('NoSuchKey')) {
         return false;
       }
       throw error;
@@ -259,7 +266,7 @@ export class StorageService {
    * @param {string} objectKey - R2 object key
    * @returns {Promise<void>}
    */
-  async deleteObject(objectKey) {
+  async deleteObject(objectKey: string): Promise<void> {
     try {
       await this.bucket.delete(objectKey);
       
@@ -269,7 +276,7 @@ export class StorageService {
     } catch (error) {
       this.logger.error('Failed to delete object from R2', {
         objectKey,
-        error: error.message
+        error: getErrorMessage(error)
       });
       throw error;
     }
@@ -280,7 +287,7 @@ export class StorageService {
    * @param {string} fileName - Original filename
    * @returns {string} Object key
    */
-  generateObjectKey(fileName) {
+  generateObjectKey(fileName: string): string {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -304,7 +311,7 @@ export class StorageService {
    * @param {string} jobId - Job ID
    * @returns {string} Transcript object key
    */
-  generateTranscriptKey(jobId) {
+  generateTranscriptKey(jobId: string): string {
     const now = new Date();
     const year = now.getFullYear();
     const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -318,7 +325,7 @@ export class StorageService {
    * @param {string} contentType - MIME type to validate
    * @returns {boolean} True if valid
    */
-  isValidContentType(contentType) {
+  isValidContentType(contentType: string): boolean {
     const validTypes = [
       'audio/mp4',
       'audio/m4a',

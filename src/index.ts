@@ -1,14 +1,21 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
-import Logger from './logger.js';
-import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleDebugJobs, handleProcessJob, handleCheckFile } from './handlers/api.js';
-import { handleTelegramWebhook } from './handlers/telegram.js';
-import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users.js';
-import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle.js';
-import { handleQueueMessage } from './services/queueConsumer.js';
+import Logger from './logger';
+import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleDebugJobs, handleProcessJob, handleCheckFile } from './handlers/api';
+import { handleTelegramWebhook } from './handlers/telegram';
+import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users';
+import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle';
+import { handleQueueMessage } from './services/queueConsumer';
+import { isAppError, getErrorMessage, getErrorStatusCode } from './utils/errors';
 
-const app = new Hono();
+const app = new Hono<{
+  Bindings: Env;
+  Variables: {
+    requestId: string;
+    logger: Logger;
+  };
+}>();
 
 // Middleware for request ID generation
 app.use('*', async (c, next) => {
@@ -93,33 +100,38 @@ app.notFound((c) => {
 });
 
 // Error handler
-app.onError((err, c) => {
+app.onError((err: Error, c) => {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
+  const errorMessage = getErrorMessage(err);
+  const statusCode = getErrorStatusCode(err);
+  
   logger.error('Unhandled error', { 
     requestId,
-    error: err.message,
+    error: errorMessage,
     stack: err.stack,
     path: c.req.path,
-    method: c.req.method
+    method: c.req.method,
+    statusCode
   });
   
   if (c.req.path.startsWith('/api/')) {
     return c.json({ 
-      error: 'Internal server error',
+      error: isAppError(err) ? errorMessage : 'Internal server error',
       requestId 
-    }, 500);
+    }, statusCode);
   }
   
-  return c.text('Internal Server Error', 500);
+  return c.text(isAppError(err) ? errorMessage : 'Internal Server Error', statusCode);
 });
 
 export default {
   // Expose Hono's fetch handler
-  fetch: (request, env, ctx) => app.fetch(request, env, ctx),
+  fetch: (request: Request, env: Env, ctx: ExecutionContext): Promise<Response> => 
+    app.fetch(request, env, ctx),
   // Export queue handler for Cloudflare Workers
-  async queue(batch, env, ctx) {
+  async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
     try {
       await handleQueueMessage(batch, env, ctx);
     } catch (error) {
@@ -128,4 +140,4 @@ export default {
     }
   },
   // No scheduled tasks needed with canonical sync approach
-};
+} satisfies ExportedHandler<Env>;

@@ -1,6 +1,8 @@
-import { handleWebhook } from '../bot/index.js';
+import { handleWebhook } from '../bot/index';
+import { HonoContext } from '../types';
+import { getErrorMessage } from '../utils/errors';
 
-export async function handleTelegramWebhook(c) {
+export async function handleTelegramWebhook(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -12,8 +14,8 @@ export async function handleTelegramWebhook(c) {
   } catch (error) {
     logger.error('Telegram webhook processing failed', { 
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     return c.text('Error', 500);
   }

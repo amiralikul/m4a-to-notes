@@ -1,8 +1,10 @@
-import { transcribeAudio } from '../services/transcription.js';
-import { StorageService } from '../services/storage.js';
-import { JobsService, JobSource } from '../services/jobs.js';
+import { transcribeAudio } from '../services/transcription';
+import { StorageService } from '../services/storage';
+import { JobsService, JobSource } from '../services/jobs';
+import { HonoContext } from '../types';
+import { getErrorMessage } from '../utils/errors';
 
-export async function handleHealthCheck(c) {
+export async function handleHealthCheck(c: HonoContext): Promise<Response> {
   const requestId = c.get('requestId');
   
   return c.json({
@@ -12,7 +14,7 @@ export async function handleHealthCheck(c) {
   });
 }
 
-export async function handleTranscription(c) {
+export async function handleTranscription(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -20,7 +22,7 @@ export async function handleTranscription(c) {
     const formData = await c.req.formData();
     const audioFile = formData.get('audio');
     
-    if (!audioFile) {
+    if (!audioFile || typeof audioFile === 'string') {
       logger.warn('No audio file provided', { requestId });
       return c.json({
         error: 'No audio file provided',
@@ -42,7 +44,7 @@ export async function handleTranscription(c) {
     }
     
     // Check file type
-    if (!audioFile.type.includes('audio') && !audioFile.name.toLowerCase().endsWith('.m4a')) {
+    if (!audioFile.type.includes('audio') && !(audioFile.name?.toLowerCase().endsWith('.m4a'))) {
       logger.warn('Invalid file type', {
         fileType: audioFile.type,
         fileName: audioFile.name,
@@ -96,10 +98,11 @@ export async function handleTranscription(c) {
     });
     
   } catch (error) {
+    const errorMessage = getErrorMessage(error);
     logger.error('Transcription failed via API', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
@@ -109,7 +112,7 @@ export async function handleTranscription(c) {
   }
 }
 
-export async function handleUploads(c) {
+export async function handleUploads(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -169,15 +172,15 @@ export async function handleUploads(c) {
   } catch (error) {
     logger.error('Failed to generate upload URL', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     // Provide more specific error messages for common configuration issues
     let errorMessage = 'Failed to generate upload URL. Please try again.';
-    if (error.message.includes('R2 credentials not configured')) {
+    if (getErrorMessage(error).includes('R2 credentials not configured')) {
       errorMessage = 'R2 storage not configured. Please contact support.';
-    } else if (error.message.includes('R2 bucket not configured')) {
+    } else if (getErrorMessage(error).includes('R2 bucket not configured')) {
       errorMessage = 'Storage service unavailable. Please contact support.';
     }
     
@@ -188,7 +191,7 @@ export async function handleUploads(c) {
   }
 }
 
-export async function handleCreateJob(c) {
+export async function handleCreateJob(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -267,8 +270,8 @@ export async function handleCreateJob(c) {
   } catch (error) {
     logger.error('Failed to create job', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
@@ -278,7 +281,7 @@ export async function handleCreateJob(c) {
   }
 }
 
-export async function handleGetJob(c) {
+export async function handleGetJob(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -337,8 +340,8 @@ export async function handleGetJob(c) {
   } catch (error) {
     logger.error('Failed to get job status', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
@@ -348,7 +351,7 @@ export async function handleGetJob(c) {
   }
 }
 
-export async function handleDebugJobs(c) {
+export async function handleDebugJobs(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -388,8 +391,8 @@ export async function handleDebugJobs(c) {
   } catch (error) {
     logger.error('Failed to get debug jobs', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
@@ -399,7 +402,7 @@ export async function handleDebugJobs(c) {
   }
 }
 
-export async function handleProcessJob(c) {
+export async function handleProcessJob(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -459,18 +462,18 @@ export async function handleProcessJob(c) {
   } catch (error) {
     logger.error('Failed to process job manually', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
-      error: 'Failed to process job: ' + error.message,
+      error: 'Failed to process job: ' + getErrorMessage(error),
       requestId
     }, 500);
   }
 }
 
-export async function handleCheckFile(c) {
+export async function handleCheckFile(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -495,18 +498,18 @@ export async function handleCheckFile(c) {
   } catch (error) {
     logger.error('Failed to check file existence', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
-      error: 'Failed to check file: ' + error.message,
+      error: 'Failed to check file: ' + getErrorMessage(error),
       requestId
     }, 500);
   }
 }
 
-export async function handleGetTranscript(c) {
+export async function handleGetTranscript(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -553,8 +556,8 @@ export async function handleGetTranscript(c) {
   } catch (error) {
     logger.error('Failed to get transcript', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({

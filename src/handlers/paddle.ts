@@ -1,5 +1,7 @@
-import { UsersService } from '../services/users.js';
-import { PaddleSyncService } from '../services/paddleSync.js';
+import { UsersService } from '../services/users';
+import { PaddleSyncService } from '../services/paddleSync';
+import { HonoContext } from '../types';
+import { getErrorMessage } from '../utils/errors';
 import { 
   WEBHOOK_EVENT_TYPES,
   SUBSCRIPTION_PLANS,
@@ -8,7 +10,7 @@ import {
   mapPaddleStatus,
   mapPaddlePriceToPlan,
   getPlanHierarchyValue
-} from '../constants/plans.js';
+} from '../constants/plans';
 
 /**
  * Verify Paddle webhook signature using Web Crypto API
@@ -17,7 +19,7 @@ import {
  * @param {string} secret - Webhook secret
  * @returns {Promise<boolean>}
  */
-async function verifyWebhookSignature(body, signature, secret) {
+async function verifyWebhookSignature(body: string, signature: string, secret: string): Promise<boolean> {
   if (!signature || !secret) return false;
   
   try {
@@ -67,7 +69,7 @@ async function verifyWebhookSignature(body, signature, secret) {
  * POST /api/webhook
  */
 
-export async function handlePaddleWebhook(c) {
+export async function handlePaddleWebhook(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -124,8 +126,8 @@ export async function handlePaddleWebhook(c) {
   } catch (error) {
     logger.error('Webhook processing failed', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     // Still acknowledge webhook to prevent retries for unrecoverable errors
@@ -141,7 +143,7 @@ export async function handlePaddleWebhook(c) {
  * Generate customer portal URL for subscription management
  * POST /api/paddle/portal
  */
-export async function handleCustomerPortal(c) {
+export async function handleCustomerPortal(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -171,8 +173,8 @@ export async function handleCustomerPortal(c) {
   } catch (error) {
     logger.error('Failed to generate customer portal URL', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({ 
@@ -186,7 +188,7 @@ export async function handleCustomerPortal(c) {
  * Cancel subscription directly via Paddle API
  * POST /api/paddle/cancel
  */
-export async function handleSubscriptionCancel(c) {
+export async function handleSubscriptionCancel(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -218,13 +220,13 @@ export async function handleSubscriptionCancel(c) {
   } catch (error) {
     logger.error('Failed to cancel subscription', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({ 
       error: 'Failed to cancel subscription',
-      details: error.message,
+      details: getErrorMessage(error),
       requestId 
     }, 500);
   }

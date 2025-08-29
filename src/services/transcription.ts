@@ -1,6 +1,8 @@
 import { OpenAI } from 'openai';
+import Logger from '../logger';
+import { TranscriptionError, getErrorMessage } from '../utils/errors';
 
-export async function transcribeAudio(audioBuffer, openaiKey, logger) {
+export async function transcribeAudio(audioBuffer: ArrayBuffer, openaiKey: string, logger: Logger): Promise<string> {
   const openai = new OpenAI({ apiKey: openaiKey });
   
   logger.info('Starting transcription', { 
@@ -27,11 +29,12 @@ export async function transcribeAudio(audioBuffer, openaiKey, logger) {
     return transcription.text;
   } catch (error) {
     const duration = Date.now() - startTime;
+    const errorMessage = getErrorMessage(error);
     logger.error('Transcription failed', { 
-      error: error.message,
+      error: errorMessage,
       duration: `${duration}ms`,
       audioSize: audioBuffer.byteLength
     });
-    throw new Error('Failed to transcribe audio');
+    throw new TranscriptionError('Failed to transcribe audio');
   }
 }

@@ -6,7 +6,9 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "wrangler dev --local",
-    "deploy": "wrangler deploy"
+    "deploy": "wrangler deploy",
+    "type-check": "tsc --noEmit",
+    "generate-types": "wrangler types"
   },
   "keywords": [],
   "author": "",
@@ -20,7 +22,9 @@
     "openai": "^5.11.0"
   },
   "devDependencies": {
+    "@types/node": "^24.3.0",
     "drizzle-kit": "^0.31.4",
+    "typescript": "^5.9.2",
     "wrangler": "^4.27.0"
   }
 }

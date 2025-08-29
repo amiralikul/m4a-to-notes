@@ -1,11 +1,13 @@
-import { UsersService } from '../services/users.js';
+import { UsersService } from '../services/users';
+import { HonoContext } from '../types';
+import { getErrorMessage } from '../utils/errors';
 
 /**
  * Middleware to validate internal API secret
  * @param {Context} c - Hono context
  * @returns {boolean} True if valid, false otherwise
  */
-function validateInternalSecret(c) {
+function validateInternalSecret(c: HonoContext): boolean {
   const providedSecret = c.req.header('X-Internal-Secret');
   const expectedSecret = c.env.INTERNAL_API_SECRET;
   
@@ -26,7 +28,7 @@ function validateInternalSecret(c) {
  * Handle syncing user entitlements from Paddle webhooks (internal only)
  * POST /api/entitlements/sync
  */
-export async function handleSyncEntitlements(c) {
+export async function handleSyncEntitlements(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -79,8 +81,8 @@ export async function handleSyncEntitlements(c) {
   } catch (error) {
     logger.error('Failed to sync entitlements', {
       requestId,
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
@@ -94,7 +96,7 @@ export async function handleSyncEntitlements(c) {
  * Handle getting user entitlements (internal only)
  * GET /api/entitlements/:userId
  */
-export async function handleGetEntitlements(c) {
+export async function handleGetEntitlements(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -140,8 +142,8 @@ export async function handleGetEntitlements(c) {
     logger.error('Failed to get entitlements', {
       requestId,
       userId: c.req.param('userId'),
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
@@ -155,7 +157,7 @@ export async function handleGetEntitlements(c) {
  * Handle checking user access to specific features (internal only)
  * GET /api/entitlements/:userId/access/:feature
  */
-export async function handleCheckAccess(c) {
+export async function handleCheckAccess(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
@@ -204,8 +206,8 @@ export async function handleCheckAccess(c) {
       requestId,
       userId: c.req.param('userId'),
       feature: c.req.param('feature'),
-      error: error.message,
-      stack: error.stack
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({

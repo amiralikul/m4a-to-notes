@@ -50,12 +50,7 @@ export const QUEUE_MESSAGE_TYPES = {
   TRANSCRIPTION: 'transcription'
 };
 
-/**
- * Map Paddle subscription status to internal status
- * @param {string} paddleStatus - Status from Paddle API
- * @returns {string} Internal subscription status
- */
-export function mapPaddleStatus(paddleStatus) {
+export function mapPaddleStatus(paddleStatus: string): string {
   const status = paddleStatus?.toLowerCase();
   
   switch (status) {
@@ -78,7 +73,7 @@ export function mapPaddleStatus(paddleStatus) {
  * @param {string} businessPriceId - Business price ID from environment
  * @returns {string} Internal plan name
  */
-export function mapPaddlePriceToPlan(priceId, businessPriceId) {
+export function mapPaddlePriceToPlan(priceId: string, businessPriceId: string): string {
   if (priceId === PADDLE_PRICE_IDS.PRO_MONTHLY) {
     return SUBSCRIPTION_PLANS.PRO;
   } else if (priceId === businessPriceId) {
@@ -91,12 +86,8 @@ export function mapPaddlePriceToPlan(priceId, businessPriceId) {
   return SUBSCRIPTION_PLANS.FREE;
 }
 
-/**
- * Get plan hierarchy value for comparison
- * @param {string} plan - Plan name
- * @returns {number} Hierarchy value (higher = more valuable)
- */
-export function getPlanHierarchyValue(plan) {
+
+export function getPlanHierarchyValue(plan: string): number {
   return PLAN_HIERARCHY[plan] || 0;
 }
 

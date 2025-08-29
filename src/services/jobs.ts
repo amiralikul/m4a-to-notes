@@ -2,21 +2,30 @@
  * Job Management Service
  * Handles job creation, status tracking, and lifecycle management using KV storage
  */
+import { JobData } from '../types';
+import Logger from '../logger';
 
 export const JobStatus = {
   QUEUED: 'queued',
   PROCESSING: 'processing',
   COMPLETED: 'completed',
   ERROR: 'error'
-};
+} as const;
+
+export type JobStatusType = typeof JobStatus[keyof typeof JobStatus];
 
 export const JobSource = {
   WEB: 'web',
   TELEGRAM: 'telegram'
-};
+} as const;
+
+export type JobSourceType = typeof JobSource[keyof typeof JobSource];
 
 export class JobsService {
-  constructor(kvNamespace, logger) {
+  private kv: KVNamespace;
+  private logger: Logger;
+
+  constructor(kvNamespace: KVNamespace, logger: Logger) {
     this.kv = kvNamespace;
     this.logger = logger;
   }
@@ -30,7 +39,12 @@ export class JobsService {
    * @param {Object} jobData.meta - Additional metadata
    * @returns {Promise<string>} Job ID
    */
-  async createJob({ objectKey, fileName, source = JobSource.WEB, meta = {} }) {
+  async createJob({ objectKey, fileName, source = JobSource.WEB, meta = {} }: {
+    objectKey: string;
+    fileName: string;
+    source?: JobSourceType;
+    meta?: Record<string, any>;
+  }): Promise<string> {
     try {
       const jobId = crypto.randomUUID();
       const now = new Date().toISOString();
