@@ -1,6 +1,8 @@
 import { ConversationService } from '../services/conversation.js';
+import { createDatabase } from '../db';
 
-export function createMiddleware(env, logger) {
+export function createMiddleware(env: Env, logger: any) {
+  const db = createDatabase(env, logger);
   return {
     // Logging middleware
     loggingMiddleware: (ctx, next) => {
@@ -26,7 +28,7 @@ export function createMiddleware(env, logger) {
     // Conversation service middleware
     conversationMiddleware: (ctx, next) => {
       // Attach conversation service to context
-      ctx.conversationService = new ConversationService(env.CONVERSATIONS, logger);
+      ctx.conversationService = new ConversationService(db, logger);
       return next();
     }
   };

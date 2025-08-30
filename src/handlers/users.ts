@@ -1,4 +1,5 @@
 import { UsersService } from '../services/users';
+import { createDatabase } from '../db';
 import { HonoContext } from '../types';
 import { getErrorMessage } from '../utils/errors';
 
@@ -54,22 +55,22 @@ export async function handleSyncEntitlements(c: HonoContext): Promise<Response> 
     }
 
     // Initialize users service
-    const users = new UsersService(c.env.ENTITLEMENTS, logger);
+    const db = createDatabase(c.env, logger);
+    const users = new UsersService(db, logger);
     
     // Update entitlements
     const entitlements = await users.set(userId, {
       plan: plan || 'free',
       status: status || 'none',
-      provider,
-      meta
-    });
+      // UsersService schema doesn't include provider/meta; these live in Paddle canonical mapping
+    } as any);
 
     logger.info('Entitlements synced successfully', {
       requestId,
       userId,
       plan: entitlements.plan,
       status: entitlements.status,
-      provider: entitlements.provider
+      provider
     });
 
     return c.json({
@@ -120,8 +121,8 @@ export async function handleGetEntitlements(c: HonoContext): Promise<Response> {
     }
 
     // Initialize users service
-    const users = new UsersService(c.env.ENTITLEMENTS, logger);
-    console.log({ users });
+    const db = createDatabase(c.env, logger);
+    const users = new UsersService(db, logger);
     
     // Get entitlements with defaults for new users
     const entitlements = await users.getWithDefaults(userId);
@@ -182,7 +183,8 @@ export async function handleCheckAccess(c: HonoContext): Promise<Response> {
     }
 
     // Initialize users service
-    const users = new UsersService(c.env.ENTITLEMENTS, logger);
+    const db = createDatabase(c.env, logger);
+    const users = new UsersService(db, logger);
     
     // Check access
     const hasAccess = await users.hasAccess(userId, feature);

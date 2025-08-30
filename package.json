@@ -8,13 +8,17 @@
     "dev": "wrangler dev --local",
     "deploy": "wrangler deploy",
     "type-check": "tsc --noEmit",
-    "generate-types": "wrangler types"
+    "generate-types": "wrangler types",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "drizzle-kit migrate",
+    "db:studio": "drizzle-kit studio"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@libsql/client": "^0.15.14",
     "aws4fetch": "^1.0.20",
     "drizzle-orm": "^0.44.4",
     "grammy": "^1.37.0",

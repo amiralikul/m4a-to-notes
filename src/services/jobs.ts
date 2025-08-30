@@ -1,8 +1,9 @@
 /**
  * Job Management Service
- * Handles job creation, status tracking, and lifecycle management using KV storage
+ * Handles job creation, status tracking, and lifecycle management using Turso DB
  */
-import { JobData } from '../types';
+import { eq } from 'drizzle-orm';
+import { Database, jobs, Job, InsertJob, UpdateJob } from '../db';
 import Logger from '../logger';
 
 export const JobStatus = {
@@ -22,11 +23,11 @@ export const JobSource = {
 export type JobSourceType = typeof JobSource[keyof typeof JobSource];
 
 export class JobsService {
-  private kv: KVNamespace;
+  private db: Database;
   private logger: Logger;
 
-  constructor(kvNamespace: KVNamespace, logger: Logger) {
-    this.kv = kvNamespace;
+  constructor(database: Database, logger: Logger) {
+    this.db = database;
     this.logger = logger;
   }
 
@@ -47,21 +48,18 @@ export class JobsService {
   }): Promise<string> {
     try {
       const jobId = crypto.randomUUID();
-      const now = new Date().toISOString();
 
-      const job = {
-        jobId,
+      const jobData: InsertJob = {
+        id: jobId,
         status: JobStatus.QUEUED,
         progress: 0,
         source,
         objectKey,
         fileName,
-        createdAt: now,
-        updatedAt: now,
         meta
       };
 
-      await this.kv.put(`job:${jobId}`, JSON.stringify(job));
+      await this.db.insert(jobs).values(jobData);
 
       this.logger.info('Job created', {
         jobId,
@@ -87,15 +85,15 @@ export class JobsService {
    * @param {string} jobId - Job ID
    * @returns {Promise<Object|null>} Job data or null if not found
    */
-  async getJob(jobId) {
+  async getJob(jobId: string): Promise<Job | null> {
     try {
-      const jobData = await this.kv.get(`job:${jobId}`);
+      const result = await this.db
+        .select()
+        .from(jobs)
+        .where(eq(jobs.id, jobId))
+        .limit(1);
       
-      if (!jobData) {
-        return null;
-      }
-
-      return JSON.parse(jobData);
+      return result[0] || null;
     } catch (error) {
       this.logger.error('Failed to get job', {
         jobId,
@@ -116,7 +114,13 @@ export class JobsService {
    * @param {Object} updates.error - Error details
    * @returns {Promise<Object>} Updated job data
    */
-  async updateJob(jobId, updates) {
+  async updateJob(jobId: string, updates: UpdateJob): Promise<Job> {
+
+    this.logger.info('Updating job', {
+      jobId,
+      updates
+    });
+
     try {
       const job = await this.getJob(jobId);
       
@@ -124,14 +128,13 @@ export class JobsService {
         throw new Error(`Job not found: ${jobId}`);
       }
 
-      // Apply updates
-      const updatedJob = {
-        ...job,
-        ...updates,
-        updatedAt: new Date().toISOString()
-      };
+      const result = await this.db
+        .update(jobs)
+        .set(updates)
+        .where(eq(jobs.id, jobId))
+        .returning();
 
-      await this.kv.put(`job:${jobId}`, JSON.stringify(updatedJob));
+      const updatedJob = result[0];
 
       this.logger.info('Job updated', {
         jobId,
@@ -156,26 +159,20 @@ export class JobsService {
    * @param {number} progress - Initial progress percentage
    * @returns {Promise<Object>} Updated job data
    */
-  async markProcessing(jobId, progress = 5) {
+  async markProcessing(jobId: string, progress = 5): Promise<Job> {
     return this.updateJob(jobId, {
       status: JobStatus.PROCESSING,
       progress
     });
   }
 
-  /**
-   * Mark job as completed
-   * @param {string} jobId - Job ID
-   * @param {string} transcriptObjectKey - R2 key for transcript
-   * @param {string} transcriptPreview - Short preview of transcript
-   * @returns {Promise<Object>} Updated job data
-   */
-  async markCompleted(jobId, transcriptObjectKey, transcriptPreview = null) {
+  async markCompleted(jobId: string, transcriptObjectKey: string, transcriptPreview: string | null = null, transcription: string): Promise<Job> {
     return this.updateJob(jobId, {
       status: JobStatus.COMPLETED,
       progress: 100,
       transcriptObjectKey,
-      transcriptPreview
+      transcriptPreview,
+      transcription,
     });
   }
 
@@ -186,13 +183,11 @@ export class JobsService {
    * @param {string} errorMessage - Error message
    * @returns {Promise<Object>} Updated job data
    */
-  async markFailed(jobId, errorCode, errorMessage) {
+  async markFailed(jobId: string, errorCode: string, errorMessage: string): Promise<Job> {
     return this.updateJob(jobId, {
       status: JobStatus.ERROR,
-      error: {
-        code: errorCode,
-        message: errorMessage
-      }
+      errorCode,
+      errorMessage
     });
   }
 
@@ -202,7 +197,7 @@ export class JobsService {
    * @param {number} progress - Progress percentage (0-100)
    * @returns {Promise<Object>} Updated job data
    */
-  async updateProgress(jobId, progress) {
+  async updateProgress(jobId: string, progress: number): Promise<Job> {
     return this.updateJob(jobId, { progress });
   }
 
@@ -212,26 +207,41 @@ export class JobsService {
    * @param {number} limit - Maximum number of jobs to return
    * @returns {Promise<Array>} Array of job objects
    */
-  async getJobsByStatus(status, limit = 100) {
+  async getJobsByStatus(status: JobStatusType, limit = 100): Promise<Job[]> {
     try {
-      // Note: This is a simple implementation. For production, consider using D1
-      // for better querying capabilities
-      const { keys } = await this.kv.list({ prefix: 'job:', limit });
-      const jobs = [];
+      const result = await this.db
+        .select()
+        .from(jobs)
+        .where(eq(jobs.status, status))
+        .limit(limit)
+        .orderBy(jobs.createdAt);
 
-      for (const key of keys) {
-        const jobData = await this.kv.get(key.name);
-        const job = JSON.parse(jobData);
-        
-        if (job.status === status) {
-          jobs.push(job);
-        }
-      }
-
-      return jobs;
+      return result;
     } catch (error) {
       this.logger.error('Failed to get jobs by status', {
         status,
+        error: error.message
+      });
+      throw error;
+    }
+  }
+
+  /**
+   * Get all jobs for debugging purposes
+   * @param {number} limit - Maximum number of jobs to return
+   * @returns {Promise<Job[]>} Array of all jobs
+   */
+  async getAllJobs(limit = 20): Promise<Job[]> {
+    try {
+      const result = await this.db
+        .select()
+        .from(jobs)
+        .limit(limit)
+        .orderBy(jobs.createdAt);
+
+      return result;
+    } catch (error) {
+      this.logger.error('Failed to get all jobs', {
         error: error.message
       });
       throw error;
@@ -243,9 +253,11 @@ export class JobsService {
    * @param {string} jobId - Job ID
    * @returns {Promise<void>}
    */
-  async deleteJob(jobId) {
+  async deleteJob(jobId: string): Promise<void> {
     try {
-      await this.kv.delete(`job:${jobId}`);
+      await this.db
+        .delete(jobs)
+        .where(eq(jobs.id, jobId));
       
       this.logger.info('Job deleted', { jobId });
     } catch (error) {
@@ -262,7 +274,7 @@ export class JobsService {
    * @param {string} jobId - Job ID
    * @returns {Promise<Object>} Client-friendly job status
    */
-  async getJobStatus(jobId) {
+  async getJobStatus(jobId: string) {
     const job = await this.getJob(jobId);
     
     if (!job) {
@@ -270,14 +282,17 @@ export class JobsService {
     }
 
     return {
-      jobId: job.jobId,
+      jobId: job.id,
       status: job.status,
       progress: job.progress,
       fileName: job.fileName,
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
       transcriptPreview: job.transcriptPreview,
-      error: job.error
+      error: job.errorCode ? {
+        code: job.errorCode,
+        message: job.errorMessage
+      } : undefined
     };
   }
 }

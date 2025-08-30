@@ -1,6 +1,7 @@
 import { transcribeAudio } from '../services/transcription';
 import { StorageService } from '../services/storage';
 import { JobsService, JobSource } from '../services/jobs';
+import { createDatabase } from '../db';
 import { HonoContext } from '../types';
 import { getErrorMessage } from '../utils/errors';
 
@@ -45,11 +46,13 @@ export async function handleTranscription(c: HonoContext): Promise<Response> {
     
     // Check file type
     if (!audioFile.type.includes('audio') && !(audioFile.name?.toLowerCase().endsWith('.m4a'))) {
+      //log
       logger.warn('Invalid file type', {
         fileType: audioFile.type,
         fileName: audioFile.name,
         requestId
       });
+      
       return c.json({
         error: 'Invalid file type. Please upload an M4A audio file.',
         requestId
@@ -211,8 +214,9 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
       }, 400);
     }
 
-    // Initialize jobs service
-    const jobs = new JobsService(c.env.JOBS, logger);
+    // Initialize database and jobs service
+    const db = createDatabase(c.env, logger);
+    const jobs = new JobsService(db, logger);
     
     // Create job
     const jobId = await jobs.createJob({
@@ -240,10 +244,11 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
           queueName: 'transcribe'
         });
       } catch (queueError) {
+        const errorMessage = queueError instanceof Error ? queueError.message : 'Unknown queue error';
         logger.error('Failed to enqueue job', {
           requestId,
           jobId,
-          queueError: queueError.message
+          queueError: errorMessage
         });
         throw queueError;
       }
@@ -284,7 +289,7 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
 export async function handleGetJob(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
-  
+
   try {
     const jobId = c.req.param('jobId');
     
@@ -295,8 +300,9 @@ export async function handleGetJob(c: HonoContext): Promise<Response> {
       }, 400);
     }
 
-    // Initialize jobs service
-    const jobs = new JobsService(c.env.JOBS, logger);
+    // Initialize database and jobs service
+    const db = createDatabase(c.env, logger);
+    const jobs = new JobsService(db, logger);
     
     // Get full job data for debugging
     const fullJob = await jobs.getJob(jobId);
@@ -326,7 +332,7 @@ export async function handleGetJob(c: HonoContext): Promise<Response> {
     let transcriptUrl = null;
     if (jobStatus.status === 'completed') {
       const job = await jobs.getJob(jobId);
-      if (job && job.transcriptObjectKey) {
+      if (job && job.meta?.transcription) {
         transcriptUrl = `/api/transcripts/${jobId}`;
       }
     }
@@ -356,26 +362,12 @@ export async function handleDebugJobs(c: HonoContext): Promise<Response> {
   const requestId = c.get('requestId');
   
   try {
-    // Get list of job keys from KV directly (JobsService doesn't have a listAll method)
-    const { keys } = await c.env.JOBS.list({ prefix: 'job:', limit: 20 });
-    const jobsList = [];
-
-    for (const key of keys) {
-      const jobData = await c.env.JOBS.get(key.name);
-      if (jobData) {
-        const job = JSON.parse(jobData);
-        jobsList.push({
-          jobId: job.jobId,
-          status: job.status,
-          progress: job.progress,
-          fileName: job.fileName,
-          createdAt: job.createdAt,
-          updatedAt: job.updatedAt,
-          source: job.source,
-          error: job.error
-        });
-      }
-    }
+    // Initialize database and jobs service
+    const db = createDatabase(c.env, logger);
+    const jobs = new JobsService(db, logger);
+    
+    // Get all jobs for debugging
+    const jobsList = await jobs.getAllJobs(20);
 
     logger.info('Debug jobs request', {
       requestId,
@@ -417,7 +409,8 @@ export async function handleProcessJob(c: HonoContext): Promise<Response> {
     }
 
     // Get job details
-    const jobs = new JobsService(c.env.JOBS, logger);
+    const db = createDatabase(c.env, logger);
+    const jobs = new JobsService(db, logger);
     const job = await jobs.getJob(jobId);
     
     if (!job) {
@@ -446,7 +439,7 @@ export async function handleProcessJob(c: HonoContext): Promise<Response> {
 
     // Process the job
     await consumer.processTranscriptionJob({
-      jobId: job.jobId,
+      jobId: job.id,
       objectKey: job.objectKey,
       fileName: job.fileName,
       source: job.source,
@@ -524,7 +517,8 @@ export async function handleGetTranscript(c: HonoContext): Promise<Response> {
     }
 
     // Initialize services
-    const jobs = new JobsService(c.env.JOBS, logger);
+    const db = createDatabase(c.env, logger);
+    const jobs = new JobsService(db, logger);
     
     // Get job
     const job = await jobs.getJob(jobId);
@@ -536,17 +530,22 @@ export async function handleGetTranscript(c: HonoContext): Promise<Response> {
       }, 404);
     }
 
-    if (job.status !== 'completed' || !job.result?.transcription) { 
+    if (job.status !== 'completed') { 
       return c.json({
         error: 'Transcript not available',
         requestId
       }, 404);
     }
 
-    // Get transcript content 
-    // const transcriptContent = await storage.downloadContent(job.transcriptObjectKey);
-    // const transcriptText = new TextDecoder().decode(transcriptContent);
-    const transcriptText = job.result.transcription;
+    // Get transcript content from meta field (where transcription is stored)
+    const transcriptText = job.transcription;
+
+    if (!transcriptText) {
+      return c.json({
+        error: 'Transcript content not available',
+        requestId
+      }, 404);
+    }
 
     return c.text(transcriptText, 200, {
       'Content-Type': 'text/plain; charset=utf-8',

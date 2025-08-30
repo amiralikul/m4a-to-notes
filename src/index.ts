@@ -9,6 +9,7 @@ import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } f
 import { handleQueueMessage } from './services/queueConsumer';
 import { isAppError, getErrorMessage, getErrorStatusCode } from './utils/errors';
 
+
 const app = new Hono<{
   Bindings: Env;
   Variables: {

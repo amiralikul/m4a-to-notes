@@ -1,5 +1,6 @@
 import { UsersService } from '../services/users';
 import { PaddleSyncService } from '../services/paddleSync';
+import { createDatabase } from '../db';
 import { HonoContext } from '../types';
 import { getErrorMessage } from '../utils/errors';
 import { 
@@ -112,7 +113,8 @@ export async function handlePaddleWebhook(c: HonoContext): Promise<Response> {
     }
     
     // 4. Fetch canonical state and sync (T3 style)
-    const syncService = new PaddleSyncService(c.env, logger);
+    const db = createDatabase(c.env, logger);
+    const syncService = new PaddleSyncService(db, c.env, logger);
     await syncService.syncPaddleDataToKV(subscriptionId, event.event_type, { requestId });
     
     logger.info('Webhook processed successfully with canonical sync', {

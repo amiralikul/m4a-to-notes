@@ -14,21 +14,30 @@ import {
   mapPaddlePriceToPlan,
   getPlanHierarchyValue
 } from '../constants/plans.js';
+import { UsersService } from './users.js';
+import { Database } from '../db';
 
 export class PaddleSyncService {
-  constructor(env, logger) {
+  private paddleApiKey: string;
+  private paddleEnvironment: string;
+  private businessPriceId: string;
+  private logger: any;
+  private users: UsersService;
+
+  constructor(database: Database, env: Env, logger: any) {
     this.paddleApiKey = env.PADDLE_API_KEY;
     this.paddleEnvironment = env.PADDLE_ENVIRONMENT || 'sandbox';
-    this.businessPriceId = env.BUSINESS_PRICE_ID;
+    // BUSINESS_PRICE_ID may not exist on Env typings
+    this.businessPriceId = (env as any).BUSINESS_PRICE_ID;
     this.logger = logger;
-    this.kv = env.ENTITLEMENTS;
+    this.users = new UsersService(database, logger);
     
     if (!this.paddleApiKey) {
       throw new Error('PADDLE_API_KEY environment variable is required');
     }
     
-    if (!this.kv) {
-      throw new Error('ENTITLEMENTS binding is required');
+    if (!this.users) {
+      throw new Error('UsersService is required');
     }
   }
   
@@ -37,7 +46,7 @@ export class PaddleSyncService {
    * @param {string} subscriptionId - Paddle subscription ID
    * @returns {Promise<Object>} Canonical subscription object
    */
-  async fetchCanonicalSubscription(subscriptionId) {
+  async fetchCanonicalSubscription(subscriptionId: string): Promise<CanonicalSubscription> {
     const baseUrl = this.paddleEnvironment === 'production' 
       ? 'https://api.paddle.com' 
       : 'https://sandbox-api.paddle.com';
@@ -65,8 +74,8 @@ export class PaddleSyncService {
       throw new Error(`Failed to fetch subscription ${subscriptionId}: ${response.status} - ${errorText}`);
     }
     
-    const data = await response.json();
-    return data.data; // Return canonical subscription object
+    const data = await response.json() as any;
+    return data.data as CanonicalSubscription; // Return canonical subscription object
   }
   
   /**
@@ -75,7 +84,7 @@ export class PaddleSyncService {
    * @param {string} eventType - Webhook event type for context
    * @param {Object} context - Additional context for sync operation
    */
-  async syncPaddleDataToKV(subscriptionId, eventType, context = {}) {
+  async syncPaddleDataToKV(subscriptionId: string, eventType: string, context: Record<string, unknown> = {}) {
     try {
       // Always fetch canonical state, never trust webhook data
       const canonicalSubscription = await this.fetchCanonicalSubscription(subscriptionId);
@@ -90,67 +99,47 @@ export class PaddleSyncService {
       // Use canonical data for all sync operations
       await this.updateEntitlements(canonicalSubscription);
       
-    } catch (error) {
+    } catch (error: unknown) {
       this.logger.error('Canonical sync failed', {
         subscriptionId,
         eventType,
-        error: error.message
+        error: error instanceof Error ? error.message : String(error)
       });
       throw error;
     }
   }
   
   /**
-   * Update entitlements in KV store using canonical subscription data
+   * Update entitlements in database using canonical subscription data
    * @param {Object} canonicalSubscription - Fresh subscription data from Paddle API
    */
-  async updateEntitlements(canonicalSubscription) {
+  async updateEntitlements(canonicalSubscription: CanonicalSubscription): Promise<void> {
     const customerId = canonicalSubscription.customer_id;
     const subscriptionId = canonicalSubscription.id;
-    
-    // Get current entitlements
-    const currentKey = `entitlements:${customerId}`;
-    const currentEntitlements = await this.kv.get(currentKey, 'json');
-    
-    // Map canonical subscription to expected entitlements
+
+    // Read current entitlements from SQLite (by userId)
+    const currentEntitlements = await this.users.get(customerId);
+
+    // Map canonical subscription to normalized structure
     const expectedEntitlements = this.mapPaddleToEntitlements(canonicalSubscription);
-    
-    // Detect and resolve conflicts
-    const conflictResult = this.detectConflicts(currentEntitlements, expectedEntitlements);
-    
-    if (conflictResult.hasConflict) {
-      this.logger.warn('Resolving subscription conflict', {
-        customerId,
-        subscriptionId,
-        conflict: conflictResult.details
-      });
-      
-      // Use conflict resolution logic
-      const resolvedEntitlements = this.resolveConflict(
-        currentEntitlements, 
-        expectedEntitlements, 
-        conflictResult
-      );
-      
-      await this.kv.put(currentKey, JSON.stringify(resolvedEntitlements));
-      
-      this.logger.info('Conflict resolved and entitlements updated', {
-        customerId,
-        subscriptionId,
-        plan: resolvedEntitlements.plan,
-        status: resolvedEntitlements.status
-      });
-    } else {
-      // No conflict, direct update
-      await this.kv.put(currentKey, JSON.stringify(expectedEntitlements));
-      
-      this.logger.info('Entitlements updated from canonical state', {
-        customerId,
-        subscriptionId,
-        plan: expectedEntitlements.plan,
-        status: expectedEntitlements.status
-      });
-    }
+
+    // Persist to SQLite using UsersService (SQLite schema fields only)
+    const saved = await this.users.set(customerId, {
+      plan: expectedEntitlements.plan,
+      status: expectedEntitlements.status,
+      // If available, store billing period end as expiresAt for convenience
+      expiresAt: expectedEntitlements?.meta?.periodEnd,
+      // Preserve existing feature/limit shapes if present
+      features: currentEntitlements?.features || [],
+      limits: currentEntitlements?.limits || {}
+    });
+
+    this.logger.info('Entitlements updated from canonical state', {
+      customerId,
+      subscriptionId,
+      plan: saved.plan,
+      status: saved.status
+    });
   }
   
   /**
@@ -158,7 +147,7 @@ export class PaddleSyncService {
    * @param {Object} subscription - Canonical Paddle subscription object
    * @returns {Object} Expected entitlements object
    */
-  mapPaddleToEntitlements(subscription) {
+  mapPaddleToEntitlements(subscription: CanonicalSubscription): EntitlementsMapping {
     let plan = SUBSCRIPTION_PLANS.FREE;
     let status = SUBSCRIPTION_STATUS.NONE;
     
@@ -167,8 +156,8 @@ export class PaddleSyncService {
 
     // Map subscription items to plan
     if (subscription.items && subscription.items.length > 0) {
-      const priceId = subscription.items[0].price?.id;
-      plan = mapPaddlePriceToPlan(priceId, this.businessPriceId);
+      const priceId = subscription.items[0].price?.id || '';
+      plan = mapPaddlePriceToPlan(priceId, this.businessPriceId || '');
     }
     
     // If canceled, revert to free plan
@@ -177,7 +166,7 @@ export class PaddleSyncService {
     }
 
     // Prepare metadata
-    const meta = {
+    const meta: EntitlementsMapping['meta'] = {
       subscriptionId: subscription.id,
       customerId: subscription.customer_id,
       currency: subscription.currency_code || 'USD',
@@ -186,7 +175,7 @@ export class PaddleSyncService {
     };
     
     if (subscription.items?.[0]?.price) {
-      meta.unitPrice = subscription.items[0].price.unit_price?.amount;
+      meta.unitPrice = subscription.items[0].price?.unit_price?.amount;
     }
     
     if (subscription.current_billing_period?.ends_at) {
@@ -223,7 +212,7 @@ export class PaddleSyncService {
    * @param {Object} expected - Expected entitlements from canonical state
    * @returns {Object} Conflict detection result
    */
-  detectConflicts(current, expected) {
+  detectConflicts(current: EntitlementsMapping | null, expected: EntitlementsMapping) {
     if (!current) {
       return {
         hasConflict: false,
@@ -235,7 +224,7 @@ export class PaddleSyncService {
       };
     }
 
-    const differences = [];
+    const differences: Array<{ field: string; current: unknown; expected: unknown }> = [];
     
     if (current.plan !== expected.plan) {
       differences.push({
@@ -280,11 +269,11 @@ export class PaddleSyncService {
    * @param {Object} conflictResult - Result from detectConflicts
    * @returns {Object} Resolved entitlements
    */
-  resolveConflict(current, expected, conflictResult) {
+  resolveConflict(current: EntitlementsMapping, expected: EntitlementsMapping, conflictResult: { details: { differences: Array<{ field: string }> } }): EntitlementsMapping {
     const { differences } = conflictResult.details;
     
     // Plan conflicts: use highest plan in hierarchy
-    const planDiff = differences.find(d => d.field === 'plan');
+    const planDiff = differences.find((d) => d.field === 'plan');
     if (planDiff) {
       const currentHierarchy = getPlanHierarchyValue(current.plan);
       const expectedHierarchy = getPlanHierarchyValue(expected.plan);
@@ -309,4 +298,41 @@ export class PaddleSyncService {
     // For other conflicts, canonical state wins
     return expected;
   }
+}
+
+// Types: narrow subset of Paddle entities we use
+interface CanonicalSubscription {
+  id: string;
+  customer_id: string;
+  status: string;
+  items?: Array<{
+    name?: string;
+    price?: {
+      id?: string;
+      unit_price?: { amount?: number };
+    };
+  }>;
+  currency_code?: string;
+  current_billing_period?: { ends_at?: string };
+  scheduled_change?: { action: string; effective_at?: string; resume_at?: string };
+  canceled_at?: string;
+}
+
+interface EntitlementsMapping {
+  plan: string;
+  status: string;
+  provider: string;
+  meta: {
+    subscriptionId: string;
+    customerId: string;
+    currency: string;
+    name: string;
+    priceId: string;
+    unitPrice?: number;
+    periodEnd?: string;
+    scheduledChange?: { action: string; effectiveAt?: string; resumeAt?: string };
+    canceledAt?: string;
+  };
+  lastUpdated: string;
+  source: string;
 }

@@ -8,20 +8,41 @@ import { transcribeAudio } from './transcription.js';
 import { StorageService } from './storage.js';
 import { JobsService } from './jobs.js';
 import { sendTelegramMessage } from './telegram.js';
+import { createDatabase } from '../db/index.js';
+import Logger from '../logger.js';
 
+// Cloudflare Workers types for queue handling
+interface MessageBatch {
+  messages: Array<{
+    id: string;
+    body: any;
+    attempts: number;
+  }>;
+}
+
+interface ExecutionContext {
+  waitUntil(promise: Promise<any>): void;
+  passThroughOnException(): void;
+}
 export class TranscriptionQueueConsumer {
-  constructor(env, logger) {
+  private env: Env;
+  private logger: Logger;
+  private storage: StorageService;
+  private jobs: JobsService;
+
+  constructor(env: Env, logger: Logger) {
     this.env = env;
     this.logger = logger;
     this.storage = new StorageService(env.M4A_BUCKET, logger, env);
-    this.jobs = new JobsService(env.JOBS, logger);
+    const db = createDatabase(env, logger);
+    this.jobs = new JobsService(db, logger);
   }
 
   /**
    * Process a transcription job from the queue
    * @param {Object} job - Job object from queue
    */
-  async processTranscriptionJob(job) {
+  async processTranscriptionJob(job: any) {
     const { jobId, userId, telegramChatId, objectKey, fileName, source, meta = {} } = job;
     const requestId = meta.requestId;
 
@@ -36,8 +57,7 @@ export class TranscriptionQueueConsumer {
     try {
       // Update job status to processing
       await this.jobs.updateJob(jobId, {
-        status: 'processing', 
-        startedAt: new Date().toISOString() 
+        status: 'processing'
       });
 
       // Download audio file from R2
@@ -67,11 +87,11 @@ export class TranscriptionQueueConsumer {
 
       const transcriptText = transcription.trim();
       
-      // Update job with completed status and result
+      // Update job with completed status and store transcription in meta
       const completedJob = await this.jobs.updateJob(jobId, {
         status: 'completed',
-        result: { transcription: transcriptText },
-        completedAt: new Date().toISOString()
+        meta: meta,
+        transcription: transcriptText
       });
 
       this.logger.info('Transcription completed successfully', {
@@ -100,10 +120,11 @@ export class TranscriptionQueueConsumer {
         });
       } catch (cleanupError) {
         // Don't fail the job if cleanup fails
+        const errorMessage = cleanupError instanceof Error ? cleanupError.message : 'Unknown cleanup error';
         this.logger.warn('Failed to clean up audio file', {
           jobId,
           objectKey,
-          error: cleanupError.message,
+          error: errorMessage,
           requestId
         });
       }
@@ -111,25 +132,27 @@ export class TranscriptionQueueConsumer {
       return completedJob;
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
       this.logger.error('Transcription job failed', {
         jobId,
         userId,
         objectKey,
-        error: error.message,
-        stack: error.stack,
+        error: errorMessage,
+        stack: errorStack,
         requestId
       });
 
-      // Update job status to failed
+      // Update job status to error
       await this.jobs.updateJob(jobId, {
-        status: 'failed',
-        error: error.message,
-        failedAt: new Date().toISOString()
+        status: 'error',
+        errorMessage: errorMessage
       });
 
       // Send error notification to user
       if (telegramChatId && this.env.TELEGRAM_BOT_TOKEN) {
-        await this.sendErrorToTelegram(telegramChatId, error.message, fileName, jobId);
+        await this.sendErrorToTelegram(telegramChatId, errorMessage, fileName, jobId);
       }
 
       throw error;
@@ -139,7 +162,7 @@ export class TranscriptionQueueConsumer {
   /**
    * Send transcription result to Telegram user
    */
-  async sendTranscriptionToTelegram(chatId, transcriptionText, fileName, jobId) {
+  private async sendTranscriptionToTelegram(chatId: string, transcriptionText: string, fileName: string, jobId: string) {
     try {
       const message = `🎯 **Transcription Complete**\n\n📁 **File:** ${fileName}\n\n📝 **Transcript:**\n\n${transcriptionText}`;
       
@@ -152,10 +175,11 @@ export class TranscriptionQueueConsumer {
       });
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       this.logger.error('Failed to send transcription to Telegram', {
         jobId,
         chatId,
-        error: error.message
+        error: errorMessage
       });
       // Don't re-throw - transcription succeeded, notification failure shouldn't fail the job
     }
@@ -164,7 +188,7 @@ export class TranscriptionQueueConsumer {
   /**
    * Send error notification to Telegram user
    */
-  async sendErrorToTelegram(chatId, errorMessage, fileName, jobId) {
+  private async sendErrorToTelegram(chatId: string, errorMessage: string, fileName: string, jobId: string) {
     try {
       const message = `❌ **Transcription Failed**\n\n📁 **File:** ${fileName}\n\n💥 **Error:** ${errorMessage}\n\nPlease try again or contact support if the problem persists.`;
       
@@ -177,11 +201,12 @@ export class TranscriptionQueueConsumer {
       });
 
     } catch (notificationError) {
+      const notifErrorMessage = notificationError instanceof Error ? notificationError.message : 'Unknown error';
       this.logger.error('Failed to send error notification to Telegram', {
         jobId,
         chatId,
         originalError: errorMessage,
-        notificationError: notificationError.message
+        notificationError: notifErrorMessage
       });
     }
   }
@@ -192,7 +217,7 @@ export class TranscriptionQueueConsumer {
  * This function will be called by the Cloudflare Workers runtime for each queued message
  * Note: Only handles transcription jobs now - Paddle webhooks processed synchronously
  */
-export async function handleQueueMessage(batch, env) {
+export async function handleQueueMessage(batch: MessageBatch, env: Env, _ctx?: ExecutionContext) {
   const logger = new (await import('../logger.js')).default(env.LOG_LEVEL || 'INFO');
   const transcriptionConsumer = new TranscriptionQueueConsumer(env, logger);
 
@@ -216,11 +241,14 @@ export async function handleQueueMessage(batch, env) {
       });
 
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorStack = error instanceof Error ? error.stack : undefined;
+      
       logger.error('Queue message processing failed', {
         messageId: message.id,
         attempts: message.attempts,
-        error: error.message,
-        stack: error.stack
+        error: errorMessage,
+        stack: errorStack
       });
 
       // Re-throw to trigger queue retry mechanism

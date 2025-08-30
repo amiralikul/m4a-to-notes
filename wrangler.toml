@@ -5,22 +5,9 @@ account_id = "e2c1e0edd19dc5cd47f9acd256ba94ec"
 
 compatibility_flags = ["nodejs_compat"]
 
-
-[[kv_namespaces]]
-binding = "CONVERSATIONS"
-id = "37462871a7824d94985cbbdcdb4baf08"
-
-[[kv_namespaces]]
-binding = "JOBS"
-id = "8837ef40371245b4ac1d70bbc81c9831"
-
 [[r2_buckets]]
 binding = "M4A_BUCKET"
 bucket_name = "m4a-to-notes"
-
-[[kv_namespaces]]
-binding = "ENTITLEMENTS"
-id = "342f8d83f226463796e72d7be214fe16"
 
 [[queues.producers]]
 binding = "QUEUE"
@@ -59,4 +46,6 @@ R2_REGION = "auto"
 # - INTERNAL_API_SECRET
 # - PADDLE_API_KEY (for subscription management)
 # - PADDLE_ENVIRONMENT (sandbox or production)
+# - TURSO_DATABASE_URL (Turso database connection URL)
+# - TURSO_AUTH_TOKEN (Turso authentication token)
 

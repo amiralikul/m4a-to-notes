@@ -148,13 +148,6 @@ export class StorageService {
     }
   }
 
-  /**
-   * Upload content directly to R2 (for server-side uploads)
-   * @param {string} objectKey - R2 object key
-   * @param {ArrayBuffer|Uint8Array|string} content - Content to upload
-   * @param {string} contentType - MIME type
-   * @returns {Promise<void>}
-   */
   async uploadContent(objectKey: string, content: string | ArrayBuffer | Blob, contentType: string): Promise<void> {
     try {
       await this.bucket.put(objectKey, content, {

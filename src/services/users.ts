@@ -1,34 +1,43 @@
 /**
  * Users Service
- * Handles user entitlements and subscription management using KV storage
+ * Handles user entitlements and subscription management using Turso DB
  */
+import { eq } from 'drizzle-orm';
+import { Database, userEntitlements, UserEntitlement, InsertUserEntitlement } from '../db';
+import Logger from '../logger';
 
 export class UsersService {
-  constructor(entitlementsKV, logger) {
-    this.entitlementsKV = entitlementsKV;
+  private db: Database;
+  private logger: Logger;
+
+  constructor(database: Database, logger: Logger) {
+    this.db = database;
     this.logger = logger;
   }
 
   /**
-   * Get user entitlements from KV storage
+   * Get user entitlements from database
    * @param {string} userId - Clerk user ID
-   * @returns {Promise<Object|null>} User entitlements or null if not found
+   * @returns {Promise<UserEntitlement|null>} User entitlements or null if not found
    */
-  async get(userId) {
+  async get(userId: string): Promise<UserEntitlement | null> {
     try {
       if (!userId) {
         throw new Error('User ID is required');
       }
 
-      const entitlementsData = await this.entitlementsKV.get(userId);
+      const result = await this.db
+        .select()
+        .from(userEntitlements)
+        .where(eq(userEntitlements.userId, userId))
+        .limit(1);
 
+      const entitlements = result[0] || null;
       
-      if (!entitlementsData) {
+      if (!entitlements) {
         this.logger.info('No entitlements found for user', { userId });
         return null;
       }
-
-      const entitlements = JSON.parse(entitlementsData);
       
       this.logger.info('Retrieved user entitlements', { 
         userId, 
@@ -47,16 +56,17 @@ export class UsersService {
   }
 
   /**
-   * Set user entitlements in KV storage
+   * Set user entitlements in database
    * @param {string} userId - Clerk user ID
    * @param {Object} entitlementsData - Entitlements data to store
    * @param {string} entitlementsData.plan - User plan: 'free' | 'pro' | 'business'
    * @param {string} entitlementsData.status - Subscription status: 'none' | 'trialing' | 'active' | 'past_due' | 'canceled'
-   * @param {string} entitlementsData.provider - Payment provider: 'paddle'
-   * @param {Object} entitlementsData.meta - Additional metadata
-   * @returns {Promise<Object>} Updated entitlements
+   * @param {string} entitlementsData.expiresAt - Expiration date ISO string
+   * @param {Array<string>} entitlementsData.features - Array of feature names
+   * @param {Object} entitlementsData.limits - Usage limits object
+   * @returns {Promise<UserEntitlement>} Updated entitlements
    */
-  async set(userId, entitlementsData) {
+  async set(userId: string, entitlementsData: Omit<InsertUserEntitlement, 'userId'>): Promise<UserEntitlement> {
     try {
       if (!userId) {
         throw new Error('User ID is required');
@@ -65,33 +75,40 @@ export class UsersService {
       // Get existing entitlements to merge with new data
       const existing = await this.get(userId);
       
-      // Prepare the entitlements object
-      const entitlements = {
+      // Prepare the entitlements object with defaults
+      const entitlements: InsertUserEntitlement = {
         userId,
         plan: entitlementsData.plan || 'free',
         status: entitlementsData.status || 'none',
-        provider: entitlementsData.provider || 'paddle',
-        meta: {
-          ...existing?.meta,
-          ...entitlementsData.meta
-        },
-        updatedAt: new Date().toISOString()
+        expiresAt: entitlementsData.expiresAt,
+        features: entitlementsData.features || [],
+        limits: {
+          ...existing?.limits,
+          ...entitlementsData.limits
+        }
       };
 
       // Validate plan and status values
       this._validateEntitlements(entitlements);
 
-      // Store in KV
-      await this.entitlementsKV.put(userId, JSON.stringify(entitlements));
+      const result = await this.db
+        .insert(userEntitlements)
+        .values(entitlements)
+        .onConflictDoUpdate({
+          target: userEntitlements.userId,
+          set: entitlements
+        })
+        .returning();
+
+      const savedEntitlements = result[0];
 
       this.logger.info('Updated user entitlements', {
         userId,
-        plan: entitlements.plan,
-        status: entitlements.status,
-        provider: entitlements.provider
+        plan: savedEntitlements.plan,
+        status: savedEntitlements.status
       });
 
-      return entitlements;
+      return savedEntitlements;
     } catch (error) {
       this.logger.error('Failed to update user entitlements', {
         userId,
@@ -105,20 +122,21 @@ export class UsersService {
   /**
    * Get user entitlements with default values for new users
    * @param {string} userId - Clerk user ID
-   * @returns {Promise<Object>} User entitlements (with defaults if not found)
+   * @returns {Promise<UserEntitlement>} User entitlements (with defaults if not found)
    */
-  async getWithDefaults(userId) {
+  async getWithDefaults(userId: string): Promise<UserEntitlement> {
     const entitlements = await this.get(userId);
     
     if (!entitlements) {
-      return {
+      const defaultEntitlements: InsertUserEntitlement = {
         userId,
         plan: 'free',
         status: 'none',
-        provider: 'paddle',
-        meta: {},
-        updatedAt: new Date().toISOString()
+        features: [],
+        limits: {}
       };
+
+      return await this.set(userId, defaultEntitlements);
     }
     
     return entitlements;
@@ -130,19 +148,19 @@ export class UsersService {
    * @param {string} feature - Feature to check: 'basic' | 'pro' | 'business'
    * @returns {Promise<boolean>} True if user has access
    */
-  async hasAccess(userId, feature = 'basic') {
+  async hasAccess(userId: string, feature = 'basic'): Promise<boolean> {
     try {
       const entitlements = await this.getWithDefaults(userId);
       
       // Check if subscription is active (for paid plans)
-      const hasActiveSubscription = ['trialing', 'active'].includes(entitlements.status);
+      const hasActiveSubscription = ['trialing', 'active'].includes(entitlements.status || '');
       
       switch (feature) {
         case 'basic':
           return true; // Everyone has basic access
         case 'pro':
-          return entitlements.plan === 'pro' && hasActiveSubscription ||
-                 entitlements.plan === 'business' && hasActiveSubscription;
+          return (entitlements.plan === 'pro' && hasActiveSubscription) ||
+                 (entitlements.plan === 'business' && hasActiveSubscription);
         case 'business':
           return entitlements.plan === 'business' && hasActiveSubscription;
         default:
@@ -163,13 +181,15 @@ export class UsersService {
    * @param {string} userId - Clerk user ID
    * @returns {Promise<void>}
    */
-  async delete(userId) {
+  async delete(userId: string): Promise<void> {
     try {
       if (!userId) {
         throw new Error('User ID is required');
       }
 
-      await this.entitlementsKV.delete(userId);
+      await this.db
+        .delete(userEntitlements)
+        .where(eq(userEntitlements.userId, userId));
       
       this.logger.info('Deleted user entitlements', { userId });
     } catch (error) {
@@ -183,24 +203,19 @@ export class UsersService {
 
   /**
    * Validate entitlements data structure
-   * @param {Object} entitlements - Entitlements to validate
+   * @param {InsertUserEntitlement} entitlements - Entitlements to validate
    * @private
    */
-  _validateEntitlements(entitlements) {
+  private _validateEntitlements(entitlements: InsertUserEntitlement): void {
     const validPlans = ['free', 'pro', 'business'];
     const validStatuses = ['none', 'trialing', 'active', 'past_due', 'canceled'];
-    const validProviders = ['paddle'];
 
-    if (!validPlans.includes(entitlements.plan)) {
+    if (entitlements.plan && !validPlans.includes(entitlements.plan)) {
       throw new Error(`Invalid plan: ${entitlements.plan}. Must be one of: ${validPlans.join(', ')}`);
     }
 
-    if (!validStatuses.includes(entitlements.status)) {
+    if (entitlements.status && !validStatuses.includes(entitlements.status)) {
       throw new Error(`Invalid status: ${entitlements.status}. Must be one of: ${validStatuses.join(', ')}`);
-    }
-
-    if (!validProviders.includes(entitlements.provider)) {
-      throw new Error(`Invalid provider: ${entitlements.provider}. Must be one of: ${validProviders.join(', ')}`);
     }
   }
 }
