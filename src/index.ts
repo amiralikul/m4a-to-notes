@@ -8,6 +8,7 @@ import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from
 import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle';
 import { handleQueueMessage } from './services/queueConsumer';
 import { isAppError, getErrorMessage, getErrorStatusCode } from './utils/errors';
+import { handleClerkWebhook } from './handlers/clerk';
 
 
 const app = new Hono<{
@@ -26,7 +27,7 @@ app.use('*', async (c, next) => {
 
 // Logger middleware
 app.use('*', async (c, next) => {
-  const logger = new Logger(c.env?.LOG_LEVEL || 'INFO');
+  const logger = new Logger(c.env?.LOG_LEVEL || 'INFO', (c.env as any)?.LOG_PRETTY === 'true');
   c.set('logger', logger);
   
   logger.logRequest(c.req.raw, { requestId: c.get('requestId') });
@@ -56,7 +57,8 @@ app.get('/api/jobs/:jobId', handleGetJob);
 app.get('/api/transcripts/:jobId', handleGetTranscript);
 
 // Paddle routes
-app.post('/api/webhook', handlePaddleWebhook);
+app.post('/api/webhook/clerk', handleClerkWebhook);
+app.post('/api/webhook/paddle', handlePaddleWebhook);
 app.post('/api/paddle/portal', handleCustomerPortal);
 app.post('/api/paddle/cancel', handleSubscriptionCancel);
 

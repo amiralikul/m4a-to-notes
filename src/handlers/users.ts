@@ -1,5 +1,5 @@
 import { UsersService } from '../services/users';
-import { createDatabase } from '../db';
+import { createOrGetDatabase } from '../db';
 import { HonoContext } from '../types';
 import { getErrorMessage } from '../utils/errors';
 
@@ -55,7 +55,7 @@ export async function handleSyncEntitlements(c: HonoContext): Promise<Response> 
     }
 
     // Initialize users service
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const users = new UsersService(db, logger);
     
     // Update entitlements
@@ -121,7 +121,7 @@ export async function handleGetEntitlements(c: HonoContext): Promise<Response> {
     }
 
     // Initialize users service
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const users = new UsersService(db, logger);
     
     // Get entitlements with defaults for new users
@@ -183,7 +183,7 @@ export async function handleCheckAccess(c: HonoContext): Promise<Response> {
     }
 
     // Initialize users service
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const users = new UsersService(db, logger);
     
     // Check access

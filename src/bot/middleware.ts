@@ -1,8 +1,8 @@
 import { ConversationService } from '../services/conversation.js';
-import { createDatabase } from '../db';
+import { createOrGetDatabase } from '../db';
 
 export function createMiddleware(env: Env, logger: any) {
-  const db = createDatabase(env, logger);
+  const db = createOrGetDatabase(env, logger);
   return {
     // Logging middleware
     loggingMiddleware: (ctx, next) => {

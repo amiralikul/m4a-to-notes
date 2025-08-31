@@ -6,7 +6,7 @@ import Logger from '../logger';
 
 let client: Client | null = null;
 let db: ReturnType<typeof drizzle> | null = null;
-export function createDatabase(env: Env, logger: Logger) {
+export function createOrGetDatabase(env: Env, logger: Logger) {
   if (!env.TURSO_DATABASE_URL) {
     logger.error('Missing TURSO_DATABASE_URL environment variable');
     throw new Error('TURSO_DATABASE_URL is required');
@@ -48,7 +48,7 @@ export function createDatabase(env: Env, logger: Logger) {
   }
 }
 
-export type Database = ReturnType<typeof createDatabase>;
+export type Database = ReturnType<typeof createOrGetDatabase>;
 
 
 export * from './schema';

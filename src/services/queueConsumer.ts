@@ -8,7 +8,7 @@ import { transcribeAudio } from './transcription.js';
 import { StorageService } from './storage.js';
 import { JobsService } from './jobs.js';
 import { sendTelegramMessage } from './telegram.js';
-import { createDatabase } from '../db/index.js';
+import { createOrGetDatabase } from '../db/index.js';
 import Logger from '../logger.js';
 
 // Cloudflare Workers types for queue handling
@@ -34,7 +34,7 @@ export class TranscriptionQueueConsumer {
     this.env = env;
     this.logger = logger;
     this.storage = new StorageService(env.M4A_BUCKET, logger, env);
-    const db = createDatabase(env, logger);
+    const db = createOrGetDatabase(env, logger);
     this.jobs = new JobsService(db, logger);
   }
 

@@ -1,7 +1,7 @@
 import { transcribeAudio } from '../services/transcription';
 import { StorageService } from '../services/storage';
 import { JobsService, JobSource } from '../services/jobs';
-import { createDatabase } from '../db';
+import { createOrGetDatabase } from '../db';
 import { HonoContext } from '../types';
 import { getErrorMessage } from '../utils/errors';
 
@@ -215,7 +215,7 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
     }
 
     // Initialize database and jobs service
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const jobs = new JobsService(db, logger);
     
     // Create job
@@ -301,7 +301,7 @@ export async function handleGetJob(c: HonoContext): Promise<Response> {
     }
 
     // Initialize database and jobs service
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const jobs = new JobsService(db, logger);
     
     // Get full job data for debugging
@@ -363,7 +363,7 @@ export async function handleDebugJobs(c: HonoContext): Promise<Response> {
   
   try {
     // Initialize database and jobs service
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const jobs = new JobsService(db, logger);
     
     // Get all jobs for debugging
@@ -409,7 +409,7 @@ export async function handleProcessJob(c: HonoContext): Promise<Response> {
     }
 
     // Get job details
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const jobs = new JobsService(db, logger);
     const job = await jobs.getJob(jobId);
     
@@ -517,7 +517,7 @@ export async function handleGetTranscript(c: HonoContext): Promise<Response> {
     }
 
     // Initialize services
-    const db = createDatabase(c.env, logger);
+    const db = createOrGetDatabase(c.env, logger);
     const jobs = new JobsService(db, logger);
     
     // Get job
