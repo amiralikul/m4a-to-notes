@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import Logger from './logger';
-import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleDebugJobs, handleProcessJob, handleCheckFile } from './handlers/api';
+import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleUploadAndProcess } from './handlers/api';
 import { handleTelegramWebhook } from './handlers/telegram';
 import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users';
 import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle';
@@ -48,11 +48,10 @@ app.use('*', honoLogger());
 app.get('/api/health', handleHealthCheck);
 app.post('/api/transcribe', handleTranscription);
 
-// New async API routes
-app.post('/api/uploads', handleUploads);
-app.post('/api/jobs', handleCreateJob);
-app.post('/api/jobs/', handleCreateJob);
+// Single endpoint for upload and process
+app.post('/api/upload-and-process', handleUploadAndProcess);
 
+// Job status and transcript retrieval
 app.get('/api/jobs/:jobId', handleGetJob);
 app.get('/api/transcripts/:jobId', handleGetTranscript);
 
@@ -66,12 +65,6 @@ app.post('/api/paddle/cancel', handleSubscriptionCancel);
 app.post('/api/entitlements/sync', handleSyncEntitlements);
 app.get('/api/entitlements/:userId', handleGetEntitlements);
 app.get('/api/entitlements/:userId/access/:feature', handleCheckAccess);
-
-
-// Debug routes
-app.get('/api/debug/jobs', handleDebugJobs);
-app.post('/api/debug/process/:jobId', handleProcessJob);
-app.get('/api/debug/file/:objectKey', handleCheckFile);
 
 // Telegram webhook route
 app.post('/', handleTelegramWebhook);

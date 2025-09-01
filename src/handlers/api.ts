@@ -357,146 +357,97 @@ export async function handleGetJob(c: HonoContext): Promise<Response> {
   }
 }
 
-export async function handleDebugJobs(c: HonoContext): Promise<Response> {
+
+export async function handleUploadAndProcess(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
   
   try {
-    // Initialize database and jobs service
-    const db = createOrGetDatabase(c.env, logger);
-    const jobs = new JobsService(db, logger);
+    const formData = await c.req.formData();
+    const audioFile = formData.get('audio');
     
-    // Get all jobs for debugging
-    const jobsList = await jobs.getAllJobs(20);
-
-    logger.info('Debug jobs request', {
-      requestId,
-      jobCount: jobsList.length
-    });
-
-    return c.json({
-      jobs: jobsList,
-      totalJobs: jobsList.length,
-      requestId
-    });
-
-  } catch (error) {
-    logger.error('Failed to get debug jobs', {
-      requestId,
-      error: getErrorMessage(error),
-      stack: error instanceof Error ? error.stack : undefined
-    });
-    
-    return c.json({
-      error: 'Failed to get jobs list',
-      requestId
-    }, 500);
-  }
-}
-
-export async function handleProcessJob(c: HonoContext): Promise<Response> {
-  const logger = c.get('logger');
-  const requestId = c.get('requestId');
-  
-  try {
-    const jobId = c.req.param('jobId');
-    
-    if (!jobId) {
+    if (!audioFile || typeof audioFile === 'string') {
+      logger.warn('No audio file provided', { requestId });
       return c.json({
-        error: 'Job ID is required',
+        error: 'No audio file provided',
         requestId
       }, 400);
     }
-
-    // Get job details
-    const db = createOrGetDatabase(c.env, logger);
-    const jobs = new JobsService(db, logger);
-    const job = await jobs.getJob(jobId);
     
-    if (!job) {
+    // File validation
+    const maxSize = 25 * 1024 * 1024; // 25MB
+    if (audioFile.size > maxSize) {
+      logger.warn('File too large', {
+        fileSize: audioFile.size,
+        requestId,
+        limit: maxSize
+      });
       return c.json({
-        error: 'Job not found',
-        requestId
-      }, 404);
-    }
-
-    if (job.status !== 'queued') {
-      return c.json({
-        error: `Job is already ${job.status}`,
+        error: 'File too large. Maximum size is 25MB.',
         requestId
       }, 400);
     }
-
-    // Manually process the job using the queue consumer
-    const { TranscriptionQueueConsumer } = await import('../services/queueConsumer.js');
-    const consumer = new TranscriptionQueueConsumer(c.env, logger);
     
-    logger.info('Manually processing job', {
-      requestId,
-      jobId,
-      fileName: job.fileName
+    // Check file type
+    const validTypes = ["audio/m4a", "audio/mp4", "audio/x-m4a"];
+    if (!validTypes.includes(audioFile.type) && !audioFile.name?.toLowerCase().endsWith('.m4a')) {
+      logger.warn('Invalid file type', {
+        fileType: audioFile.type,
+        fileName: audioFile.name,
+        requestId
+      });
+      return c.json({
+        error: 'Invalid file type. Please upload an M4A audio file.',
+        requestId
+      }, 400);
+    }
+    
+    logger.info('Processing upload and process request', {
+      fileName: audioFile.name,
+      fileSize: audioFile.size,
+      fileType: audioFile.type,
+      requestId
+    });
+    
+    // Use the existing simple transcription orchestrator
+    const { createServices } = await import('../services/serviceFactory.js');
+    const services = createServices(c.env, logger);
+
+    // Convert file to array buffer
+    const audioBuffer = await audioFile.arrayBuffer();
+    
+    // Create job using orchestrator (this handles upload to R2 and queueing)
+    const result = await services.transcriptionOrchestrator.createJob({
+      audioBuffer,
+      fileName: audioFile.name || 'audio.m4a',
+      source: 'web',
+      meta: { requestId }
     });
 
-    // Process the job
-    await consumer.processTranscriptionJob({
-      jobId: job.id,
-      objectKey: job.objectKey,
-      fileName: job.fileName,
-      source: job.source,
-      meta: job.meta
+    logger.info('Upload and process job created successfully', {
+      requestId,
+      jobId: result.jobId,
+      estimatedDuration: result.estimatedDuration,
+      fileName: audioFile.name
     });
 
     return c.json({
-      message: 'Job processed successfully',
-      jobId,
+      jobId: result.jobId,
+      status: 'queued',
+      estimatedDuration: result.estimatedDuration,
       requestId
-    });
-
+    }, 201);
+    
   } catch (error) {
-    logger.error('Failed to process job manually', {
+    const errorMessage = getErrorMessage(error);
+    logger.error('Upload and process failed', {
       requestId,
-      error: getErrorMessage(error),
+      error: errorMessage,
       stack: error instanceof Error ? error.stack : undefined
     });
     
     return c.json({
-      error: 'Failed to process job: ' + getErrorMessage(error),
-      requestId
-    }, 500);
-  }
-}
-
-export async function handleCheckFile(c: HonoContext): Promise<Response> {
-  const logger = c.get('logger');
-  const requestId = c.get('requestId');
-  
-  try {
-    const objectKey = c.req.param('objectKey').replace('---', '/'); // Replace --- with / for URL safety
-    
-    const storage = new StorageService(c.env.M4A_BUCKET, logger, c.env);
-    const exists = await storage.objectExists(objectKey);
-    
-    logger.info('File existence check', {
-      requestId,
-      objectKey,
-      exists
-    });
-
-    return c.json({
-      objectKey,
-      exists,
-      requestId
-    });
-
-  } catch (error) {
-    logger.error('Failed to check file existence', {
-      requestId,
-      error: getErrorMessage(error),
-      stack: error instanceof Error ? error.stack : undefined
-    });
-    
-    return c.json({
-      error: 'Failed to check file: ' + getErrorMessage(error),
+      error: 'Failed to process audio file. Please try again.',
       requestId
     }, 500);
   }

@@ -4,11 +4,9 @@
  * Note: Paddle webhook processing removed - now handled synchronously with canonical state fetching
  */
 
-import { transcribeAudio } from './transcription.js';
-import { StorageService } from './storage.js';
-import { JobsService } from './jobs.js';
 import { sendTelegramMessage } from './telegram.js';
-import { createOrGetDatabase } from '../db/index.js';
+import { TranscriptionOrchestrator } from './transcriptionOrchestrator.js';
+import { createServices } from './serviceFactory.js';
 import Logger from '../logger.js';
 
 // Cloudflare Workers types for queue handling
@@ -27,15 +25,15 @@ interface ExecutionContext {
 export class TranscriptionQueueConsumer {
   private env: Env;
   private logger: Logger;
-  private storage: StorageService;
-  private jobs: JobsService;
+  private orchestrator: TranscriptionOrchestrator;
 
   constructor(env: Env, logger: Logger) {
     this.env = env;
     this.logger = logger;
-    this.storage = new StorageService(env.M4A_BUCKET, logger, env);
-    const db = createOrGetDatabase(env, logger);
-    this.jobs = new JobsService(db, logger);
+    
+    // Use service factory to create orchestrator with all dependencies
+    const services = createServices(env, logger);
+    this.orchestrator = services.transcriptionOrchestrator;
   }
 
   /**
@@ -43,90 +41,42 @@ export class TranscriptionQueueConsumer {
    * @param {Object} job - Job object from queue
    */
   async processTranscriptionJob(job: any) {
-    const { jobId, userId, telegramChatId, objectKey, fileName, source, meta = {} } = job;
+    const { jobId, userId, telegramChatId, fileName, source, meta = {} } = job;
     const requestId = meta.requestId;
 
     this.logger.info('Processing transcription job from queue', {
       jobId,
       userId,
       telegramChatId,
-      objectKey,
       requestId
     });
 
     try {
-      // Update job status to processing
-      await this.jobs.updateJob(jobId, {
-        status: 'processing'
-      });
+      // Delegate core transcription processing to orchestrator
+      await this.orchestrator.processJob(jobId);
 
-      // Download audio file from R2
-      this.logger.info('Downloading audio file for transcription', { 
-        jobId, 
-        objectKey, 
-        requestId 
-      });
+      // Get the completed job to access transcription result
+      const services = createServices(this.env, this.logger);
+      const completedJob = await services.jobsService.getJob(jobId);
       
-      const audioBuffer = await this.storage.downloadContent(objectKey);
-      if (!audioBuffer) {
-        throw new Error(`Audio file not found: ${objectKey}`);
+      if (!completedJob || !completedJob.transcription) {
+        throw new Error('Job completed but transcription not found');
       }
 
-      // Transcribe using OpenAI Whisper
-      this.logger.info('Starting transcription with OpenAI Whisper', { 
-        jobId, 
-        fileName, 
-        requestId 
-      });
-      
-      const transcription = await transcribeAudio(audioBuffer, this.env.OPENAI_API_KEY, this.logger);
-      
-      if (!transcription || typeof transcription !== 'string') {
-        throw new Error('Transcription failed - no text returned');
-      }
-
-      const transcriptText = transcription.trim();
-      
-      // Update job with completed status and store transcription in meta
-      const completedJob = await this.jobs.updateJob(jobId, {
-        status: 'completed',
-        meta: meta,
-        transcription: transcriptText
-      });
-
-      this.logger.info('Transcription completed successfully', {
+      this.logger.info('Transcription completed successfully via orchestrator', {
         jobId,
-        transcriptionLength: transcriptText.length,
+        transcriptionLength: completedJob.transcription.length,
         requestId
       });
 
-      // Send result to user via Telegram
+      // Send result to user via Telegram (transport-specific logic)
       if (telegramChatId && this.env.TELEGRAM_BOT_TOKEN) {
         await this.sendTranscriptionToTelegram(
           telegramChatId, 
-          transcriptText, 
+          completedJob.transcription, 
           fileName, 
           jobId
         );
-      }
-
-      // Clean up: delete processed file from R2
-      try {
-        await this.storage.deleteObject(objectKey);
-        this.logger.info('Cleaned up processed audio file', { 
-          jobId, 
-          objectKey, 
-          requestId 
-        });
-      } catch (cleanupError) {
-        // Don't fail the job if cleanup fails
-        const errorMessage = cleanupError instanceof Error ? cleanupError.message : 'Unknown cleanup error';
-        this.logger.warn('Failed to clean up audio file', {
-          jobId,
-          objectKey,
-          error: errorMessage,
-          requestId
-        });
       }
 
       return completedJob;
@@ -138,19 +88,12 @@ export class TranscriptionQueueConsumer {
       this.logger.error('Transcription job failed', {
         jobId,
         userId,
-        objectKey,
         error: errorMessage,
         stack: errorStack,
         requestId
       });
 
-      // Update job status to error
-      await this.jobs.updateJob(jobId, {
-        status: 'error',
-        errorMessage: errorMessage
-      });
-
-      // Send error notification to user
+      // Send error notification to user (transport-specific logic)
       if (telegramChatId && this.env.TELEGRAM_BOT_TOKEN) {
         await this.sendErrorToTelegram(telegramChatId, errorMessage, fileName, jobId);
       }
