@@ -1,6 +1,6 @@
 import { transcribeAudio } from '../services/transcription';
 import { StorageService } from '../services/storage';
-import { JobsService, JobSource } from '../services/jobs';
+import { TranscriptionsService, TranscriptionSource } from '../services/transcriptions';
 import { createOrGetDatabase } from '../db';
 import { HonoContext } from '../types';
 import { getErrorMessage } from '../utils/errors';
@@ -200,7 +200,7 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
   
   try {
     const body = await c.req.json();
-    const { objectKey, fileName, source = JobSource.WEB, meta = {} } = body;
+    const { objectKey, fileName, source = TranscriptionSource.WEB, meta = {} } = body;
     
     if (!objectKey || !fileName) {
       logger.warn('Missing required fields for job creation', {
@@ -214,66 +214,63 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
       }, 400);
     }
 
-    // Initialize database and jobs service
+    // Initialize database and transcriptions service
     const db = createOrGetDatabase(c.env, logger);
-    const jobs = new JobsService(db, logger);
+    const transcriptions = new TranscriptionsService(db, logger);
     
-    // Create job
-    const jobId = await jobs.createJob({
-      objectKey,
-      fileName,
+    // Create transcription
+    const transcriptionId = await transcriptions.create({
+      audioKey: objectKey,
+      filename: fileName,
       source,
-      meta: { ...meta, requestId }
+      userMetadata: { ...meta, requestId }
     });
 
-    // Enqueue transcription job
+    // Enqueue transcription event
     if (c.env.QUEUE) {
       try {
         await c.env.QUEUE.send({
-          jobId,
-          objectKey,
-          fileName,
-          source,
-          meta: { ...meta, requestId }
+          eventType: 'transcription.requested',
+          transcriptionId,
+          timestamp: new Date().toISOString()
         });
         
-        logger.info('Job enqueued successfully', {
+        logger.info('Transcription enqueued successfully', {
           requestId,
-          jobId,
-          objectKey,
+          transcriptionId,
           queueName: 'transcribe'
         });
       } catch (queueError) {
         const errorMessage = queueError instanceof Error ? queueError.message : 'Unknown queue error';
-        logger.error('Failed to enqueue job', {
+        logger.error('Failed to enqueue transcription', {
           requestId,
-          jobId,
+          transcriptionId,
           queueError: errorMessage
         });
         throw queueError;
       }
     } else {
-      logger.warn('QUEUE not configured, job created but not enqueued', {
+      logger.warn('QUEUE not configured, transcription created but not enqueued', {
         requestId,
-        jobId
+        transcriptionId
       });
     }
 
-    logger.info('Job created successfully', {
+    logger.info('Transcription created successfully', {
       requestId,
-      jobId,
-      objectKey,
-      fileName,
+      transcriptionId,
+      filename: fileName,
       source
     });
 
     return c.json({
-      jobId,
+      transcriptionId,
+      jobId: transcriptionId, // Backward compatibility
       requestId
     }, 201);
 
   } catch (error) {
-    logger.error('Failed to create job', {
+    logger.error('Failed to create transcription', {
       requestId,
       error: getErrorMessage(error),
       stack: error instanceof Error ? error.stack : undefined
@@ -286,65 +283,71 @@ export async function handleCreateJob(c: HonoContext): Promise<Response> {
   }
 }
 
-export async function handleGetJob(c: HonoContext): Promise<Response> {
+export async function handleGetTranscription(c: HonoContext): Promise<Response> {
   const logger = c.get('logger');
   const requestId = c.get('requestId');
 
+  logger.info('handleGetTranscription called', { 
+    url: c.req.url, 
+    path: c.req.path,
+    requestId 
+  });
+
   try {
-    const jobId = c.req.param('jobId');
+    const transcriptionId = c.req.param('transcriptionId');
     
-    if (!jobId) {
+    if (!transcriptionId) {
       return c.json({
-        error: 'Job ID is required',
+        error: 'Transcription ID is required',
         requestId
       }, 400);
     }
 
-    // Initialize database and jobs service
+    // Initialize database and transcriptions service
     const db = createOrGetDatabase(c.env, logger);
-    const jobs = new JobsService(db, logger);
+    const transcriptions = new TranscriptionsService(db, logger);
     
-    // Get full job data for debugging
-    const fullJob = await jobs.getJob(jobId);
-    const jobStatus = await jobs.getJobStatus(jobId);
+    // Get full transcription data for debugging
+    const fullTranscription = await transcriptions.findById(transcriptionId);
+    const transcriptionStatus = await transcriptions.getStatus(transcriptionId);
     
-    logger.info('Job status request', {
+    logger.info('Transcription status request', {
       requestId,
-      jobId,
-      fullJobStatus: fullJob?.status,
-      fullJobProgress: fullJob?.progress,
-      returnedStatus: jobStatus?.status,
-      returnedProgress: jobStatus?.progress
+      transcriptionId,
+      fullStatus: fullTranscription?.status,
+      fullProgress: fullTranscription?.progress,
+      returnedStatus: transcriptionStatus?.status,
+      returnedProgress: transcriptionStatus?.progress
     });
     
-    if (!jobStatus) {
-      logger.warn('Job not found', {
+    if (!transcriptionStatus) {
+      logger.warn('Transcription not found', {
         requestId,
-        jobId
+        transcriptionId
       });
       return c.json({
-        error: 'Job not found',
+        error: 'Transcription not found',
         requestId
       }, 404);
     }
 
     // Add transcript URL if completed
     let transcriptUrl = null;
-    if (jobStatus.status === 'completed') {
-      const job = await jobs.getJob(jobId);
-      if (job && job.meta?.transcription) {
-        transcriptUrl = `/api/transcripts/${jobId}`;
+    if (transcriptionStatus.status === 'completed') {
+      const transcription = await transcriptions.findById(transcriptionId);
+      if (transcription && transcription.transcriptText) {
+        transcriptUrl = `/api/transcriptions/${transcriptionId}/transcript`;
       }
     }
 
     return c.json({
-      ...jobStatus,
+      ...transcriptionStatus,
       transcriptUrl,
       requestId
     });
 
   } catch (error) {
-    logger.error('Failed to get job status', {
+    logger.error('Failed to get transcription status', {
       requestId,
       error: getErrorMessage(error),
       stack: error instanceof Error ? error.stack : undefined
@@ -416,24 +419,25 @@ export async function handleUploadAndProcess(c: HonoContext): Promise<Response> 
     // Convert file to array buffer
     const audioBuffer = await audioFile.arrayBuffer();
     
-    // Create job using orchestrator (this handles upload to R2 and queueing)
-    const result = await services.transcriptionOrchestrator.createJob({
+    // Create transcription using orchestrator (this handles upload to R2 and queueing)
+    const result = await services.transcriptionOrchestrator.createTranscription({
       audioBuffer,
-      fileName: audioFile.name || 'audio.m4a',
+      filename: audioFile.name || 'audio.m4a',
       source: 'web',
-      meta: { requestId }
+      userMetadata: { requestId }
     });
 
-    logger.info('Upload and process job created successfully', {
+    logger.info('Upload and process transcription created successfully', {
       requestId,
-      jobId: result.jobId,
+      transcriptionId: result.transcriptionId,
       estimatedDuration: result.estimatedDuration,
-      fileName: audioFile.name
+      filename: audioFile.name
     });
 
     return c.json({
-      jobId: result.jobId,
-      status: 'queued',
+      transcriptionId: result.transcriptionId,
+      jobId: result.transcriptionId, // Backward compatibility 
+      status: 'pending',
       estimatedDuration: result.estimatedDuration,
       requestId
     }, 201);
@@ -458,38 +462,38 @@ export async function handleGetTranscript(c: HonoContext): Promise<Response> {
   const requestId = c.get('requestId');
   
   try {
-    const jobId = c.req.param('jobId');
+    const transcriptionId = c.req.param('transcriptionId');
     
-    if (!jobId) {
+    if (!transcriptionId) {
       return c.json({
-        error: 'Job ID is required',
+        error: 'Transcription ID is required',
         requestId
       }, 400);
     }
 
     // Initialize services
     const db = createOrGetDatabase(c.env, logger);
-    const jobs = new JobsService(db, logger);
+    const transcriptions = new TranscriptionsService(db, logger);
     
-    // Get job
-    const job = await jobs.getJob(jobId);
+    // Get transcription
+    const transcription = await transcriptions.findById(transcriptionId);
     
-    if (!job) {
+    if (!transcription) {
       return c.json({
-        error: 'Job not found',
+        error: 'Transcription not found',
         requestId
       }, 404);
     }
 
-    if (job.status !== 'completed') { 
+    if (transcription.status !== 'completed') { 
       return c.json({
         error: 'Transcript not available',
         requestId
       }, 404);
     }
 
-    // Get transcript content from meta field (where transcription is stored)
-    const transcriptText = job.transcription;
+    // Get transcript content from transcription
+    const transcriptText = transcription.transcriptText;
 
     if (!transcriptText) {
       return c.json({
@@ -500,7 +504,7 @@ export async function handleGetTranscript(c: HonoContext): Promise<Response> {
 
     return c.text(transcriptText, 200, {
       'Content-Type': 'text/plain; charset=utf-8',
-      'Content-Disposition': `attachment; filename="transcript-${jobId}.txt"`
+      'Content-Disposition': `attachment; filename="transcript-${transcriptionId}.txt"`
     });
 
   } catch (error) {

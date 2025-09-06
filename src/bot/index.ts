@@ -2,8 +2,9 @@ import { Bot } from 'grammy/web';
 import { createHandlers } from './handlers.js';
 import { createMiddleware } from './middleware.js';
 import { getOrCreateBot } from '../services/botManager.js';
+import Logger from '../logger.js';
 
-export function createBot(token, env, logger) {
+export function createBot(token: string, env: Env, logger: Logger) {
   const bot = new Bot(token);
   
   // Add custom middleware

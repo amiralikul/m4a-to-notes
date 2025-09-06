@@ -63,6 +63,9 @@ export class StorageService {
       // Create the URL for the PUT request
       const url = new URL(`${this.r2Endpoint}/${this.bucketName}/${objectKey}`);
       
+      // Set expiry in query for S3 presign
+      url.searchParams.set('X-Amz-Expires', String(expiresIn));
+
       // Create a PUT request for signing
       const request = new Request(url, {
         method: 'PUT',
@@ -74,7 +77,6 @@ export class StorageService {
       // Generate presigned URL using aws4fetch
       const signedRequest = await this.awsClient.sign(request, {
         aws: { signQuery: true },
-        expiresIn,
       });
 
       const uploadUrl = signedRequest.url;
@@ -119,6 +121,9 @@ export class StorageService {
       // Create the URL for the GET request
       const url = new URL(`${this.r2Endpoint}/${this.bucketName}/${objectKey}`);
       
+      // Set expiry in query for S3 presign
+      url.searchParams.set('X-Amz-Expires', String(expiresIn));
+
       // Create a GET request for signing
       const request = new Request(url, {
         method: 'GET',
@@ -127,7 +132,6 @@ export class StorageService {
       // Generate presigned URL using aws4fetch
       const signedRequest = await this.awsClient.sign(request, {
         aws: { signQuery: true },
-        expiresIn,
       });
 
       const downloadUrl = signedRequest.url;
@@ -156,10 +160,17 @@ export class StorageService {
         }
       });
 
+      // Compute size for logging without type errors
+      const size =
+        typeof content === 'string' ? new TextEncoder().encode(content).byteLength
+        : content instanceof ArrayBuffer ? content.byteLength
+        : 'size' in content ? content.size
+        : undefined;
+
       this.logger.info('Content uploaded to R2', {
         objectKey,
         contentType,
-        size: content.byteLength || content.length
+        size
       });
     } catch (error) {
       this.logger.error('Failed to upload content to R2', {

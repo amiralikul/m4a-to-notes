@@ -1,6 +1,7 @@
 import { createOrGetDatabase } from "../db";
 import { PaddleSyncService } from "../services/paddleSync";
 import { HonoContext } from "../types";
+import { getErrorMessage } from "../utils/errors";
 
 
 

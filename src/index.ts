@@ -2,13 +2,14 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import Logger from './logger';
-import { handleTranscription, handleHealthCheck, handleUploads, handleCreateJob, handleGetJob, handleGetTranscript, handleUploadAndProcess } from './handlers/api';
+import { handleTranscription, handleHealthCheck, handleGetTranscription, handleGetTranscript, handleUploadAndProcess } from './handlers/api';
 import { handleTelegramWebhook } from './handlers/telegram';
 import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users';
 import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle';
-import { handleQueueMessage } from './services/queueConsumer';
+import { handleQueueMessage, TranscriptionQueueMessage } from './services/queueConsumer';
 import { isAppError, getErrorMessage, getErrorStatusCode } from './utils/errors';
 import { handleClerkWebhook } from './handlers/clerk';
+// Removed TranscriptionMessageBatch in favor of Cloudflare MessageBatch<TranscriptionQueueMessage>
 
 
 const app = new Hono<{
@@ -27,7 +28,7 @@ app.use('*', async (c, next) => {
 
 // Logger middleware
 app.use('*', async (c, next) => {
-  const logger = new Logger(c.env?.LOG_LEVEL || 'INFO', (c.env as any)?.LOG_PRETTY === 'true');
+  const logger = new Logger(c.env?.LOG_LEVEL || 'INFO');
   c.set('logger', logger);
   
   logger.logRequest(c.req.raw, { requestId: c.get('requestId') });
@@ -51,9 +52,9 @@ app.post('/api/transcribe', handleTranscription);
 // Single endpoint for upload and process
 app.post('/api/upload-and-process', handleUploadAndProcess);
 
-// Job status and transcript retrieval
-app.get('/api/jobs/:jobId', handleGetJob);
-app.get('/api/transcripts/:jobId', handleGetTranscript);
+// Transcription routes
+app.get('/api/transcriptions/:transcriptionId', handleGetTranscription);
+app.get('/api/transcriptions/:transcriptionId/transcript', handleGetTranscript);
 
 // Paddle routes
 app.post('/api/webhook/clerk', handleClerkWebhook);
@@ -116,18 +117,19 @@ app.onError((err: Error, c) => {
     return c.json({ 
       error: isAppError(err) ? errorMessage : 'Internal server error',
       requestId 
-    }, statusCode);
+    }, statusCode as any);
   }
   
-  return c.text(isAppError(err) ? errorMessage : 'Internal Server Error', statusCode);
+  return c.text(isAppError(err) ? errorMessage : 'Internal Server Error', statusCode as any);
 });
 
 export default {
   // Expose Hono's fetch handler
-  fetch: (request: Request, env: Env, ctx: ExecutionContext): Promise<Response> => 
-    app.fetch(request, env, ctx),
+  fetch: async (request, env, ctx) => {
+    return await app.fetch(request, env, ctx);
+  },
   // Export queue handler for Cloudflare Workers
-  async queue(batch: MessageBatch<any>, env: Env, ctx: ExecutionContext): Promise<void> {
+  async queue(batch: MessageBatch<TranscriptionQueueMessage>, env, ctx): Promise<void> {
     try {
       await handleQueueMessage(batch, env, ctx);
     } catch (error) {
@@ -136,4 +138,4 @@ export default {
     }
   },
   // No scheduled tasks needed with canonical sync approach
-} satisfies ExportedHandler<Env>;
+} satisfies ExportedHandler<Env, TranscriptionQueueMessage>;

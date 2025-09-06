@@ -1,6 +1,6 @@
-import OpenAI from 'openai';
-
-async function getChatCompletion(messages, apiKey, logger) {
+import OpenAI, { APIConnectionError, APIError , } from 'openai';
+import Logger from '../logger';
+async function getChatCompletion(messages: any, apiKey: string, logger: Logger) {
   logger.debug('Requesting chat completion from OpenAI', { messageCount: messages.length });
   
   const openai = new OpenAI({
@@ -31,10 +31,10 @@ async function getChatCompletion(messages, apiKey, logger) {
     return responseContent;
   } catch (error) {
     logger.error('OpenAI chat completion failed', { 
-      error: error.message,
-      status: error.status
+      error: error instanceof Error ? error.message : String(error),
+      status: error instanceof APIError ? error.status : undefined
     });
-    throw new Error(`OpenAI API error: ${error.message}`);
+    throw new Error(`OpenAI API error: ${ error instanceof Error ? error.message : String(error) }`);
   }
 }
 

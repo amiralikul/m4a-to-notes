@@ -11,7 +11,13 @@
     "generate-types": "wrangler types",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "lint": "biome lint .",
+    "lint:fix": "biome lint --write .",
+    "format": "biome format .",
+    "format:fix": "biome format --write .",
+    "check": "biome check .",
+    "check:fix": "biome check --write ."
   },
   "keywords": [],
   "author": "",
@@ -26,6 +32,7 @@
     "openai": "^5.11.0"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.2.3",
     "@cloudflare/workers-types": "^4.20250831.0",
     "@types/node": "^24.3.0",
     "drizzle-kit": "^0.31.4",

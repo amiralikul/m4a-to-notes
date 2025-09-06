@@ -1,7 +1,7 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 import { sql } from 'drizzle-orm';
 
-// Jobs table (replaces JOBS KV namespace)
+// Jobs table (replaces JOBS KV namespace) - DEPRECATED: Use transcriptions table
 export const jobs = sqliteTable('jobs', {
   id: text('id').primaryKey(), // UUID
   status: text('status', { 
@@ -26,7 +26,43 @@ export const jobs = sqliteTable('jobs', {
     .$onUpdate(() => sql`(CURRENT_TIMESTAMP)`),
   meta: text('meta', { mode: 'json' }).$type<Record<string, any>>(),
   transcription: text('transcription'),
+});
 
+// Transcriptions table - NEW: Domain-focused table for transcription workflow
+export const transcriptions = sqliteTable('transcriptions', {
+  id: text('id').primaryKey(), // UUID
+  
+  // Status & Progress
+  status: text('status', { 
+    enum: ['pending', 'processing', 'completed', 'failed'] 
+  }).notNull(),
+  progress: integer('progress').default(0).notNull(),
+  
+  // Input Data
+  audioKey: text('audio_key').notNull(), // R2 object key for audio file
+  filename: text('filename').notNull(),   // Original filename
+  source: text('source', { 
+    enum: ['web', 'telegram'] 
+  }).notNull(),
+  
+  // Output Data  
+  transcriptText: text('transcript_text'),     // Full transcription result
+  preview: text('preview'),                    // Short preview of transcription
+  
+  // Metadata
+  userMetadata: text('user_metadata', { mode: 'json' }).$type<Record<string, any>>(),
+  errorDetails: text('error_details', { mode: 'json' }).$type<{code?: string, message?: string}>(),
+  
+  // Timestamps
+  createdAt: text('created_at')
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`),
+  startedAt: text('started_at'),               // When processing began
+  completedAt: text('completed_at'),           // When processing finished
+  updatedAt: text('updated_at')
+    .notNull()
+    .default(sql`(CURRENT_TIMESTAMP)`)
+    .$onUpdate(() => sql`(CURRENT_TIMESTAMP)`)
 });
 
 // Conversations table (replaces CONVERSATIONS KV namespace)  
@@ -77,6 +113,10 @@ export interface ConversationData {
 export type Job = typeof jobs.$inferSelect;
 export type InsertJob = typeof jobs.$inferInsert;
 export type UpdateJob = Partial<Omit<Job, 'id'>>;
+
+export type Transcription = typeof transcriptions.$inferSelect;
+export type InsertTranscription = typeof transcriptions.$inferInsert;
+export type UpdateTranscription = Partial<Omit<Transcription, 'id'>>;
 
 export type Conversation = typeof conversations.$inferSelect;
 export type InsertConversation = typeof conversations.$inferInsert;

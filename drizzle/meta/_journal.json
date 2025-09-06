@@ -22,6 +22,13 @@
       "when": 1756580964465,
       "tag": "0002_round_wallow",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1756817393119,
+      "tag": "0003_sturdy_molecule_man",
+      "breakpoints": true
     }
   ]
 }

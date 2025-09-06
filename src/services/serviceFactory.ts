@@ -4,7 +4,7 @@
  * No complex DI container - just simple factory functions
  */
 import { createOrGetDatabase } from '../db';
-import { JobsService } from './jobs';
+import { TranscriptionsService } from './transcriptions';
 import { StorageService } from './storage';
 import { TranscriptionOrchestrator } from './transcriptionOrchestrator';
 import Logger from '../logger';
@@ -15,11 +15,11 @@ import Logger from '../logger';
  */
 export function createServices(env: Env, logger: Logger) {
   const database = createOrGetDatabase(env, logger);
-  const jobsService = new JobsService(database, logger);
+  const transcriptionsService = new TranscriptionsService(database, logger);
   const storageService = new StorageService(env.M4A_BUCKET, logger, env);
   
   const transcriptionOrchestrator = new TranscriptionOrchestrator(
-    jobsService,
+    transcriptionsService,
     storageService, 
     env.OPENAI_API_KEY,
     logger,
@@ -28,7 +28,7 @@ export function createServices(env: Env, logger: Logger) {
 
   return {
     database,
-    jobsService,
+    transcriptionsService,
     storageService,
     transcriptionOrchestrator,
     // Add more services as needed
