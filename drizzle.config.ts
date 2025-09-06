@@ -9,8 +9,10 @@ export default defineConfig({
   out: './drizzle',
   dialect: 'turso',
   dbCredentials: {
-    url: isLocalDb ? './local.db' : process.env.TURSO_DATABASE_URL!,
-    authToken: isLocalDb ? undefined : process.env.TURSO_AUTH_TOKEN!,
+    // url: isLocalDb ? './local.db' : process.env.TURSO_DATABASE_URL!,
+    // authToken: isLocalDb ? undefined : process.env.TURSO_AUTH_TOKEN!,
+    url: process.env.TURSO_DATABASE_URL!,
+    authToken: process.env.TURSO_AUTH_TOKEN!,
   },
 });
 
