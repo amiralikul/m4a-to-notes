@@ -1,0 +1,1 @@
+ALTER TABLE `transcriptions` DROP COLUMN `transcript_key`;
