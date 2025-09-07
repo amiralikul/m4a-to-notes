@@ -47,7 +47,6 @@ app.use('*', honoLogger());
 
 // API Routes
 app.get('/api/health', handleHealthCheck);
-app.post('/api/transcribe', handleTranscription);
 
 // Single endpoint for upload and process
 app.post('/api/upload-and-process', handleUploadAndProcess);
