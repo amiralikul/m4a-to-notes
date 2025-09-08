@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { logger as honoLogger } from 'hono/logger';
 import Logger from './logger';
-import { handleTranscription, handleHealthCheck, handleGetTranscription, handleGetTranscript, handleUploadAndProcess } from './handlers/api';
+import { handleHealthCheck, handleGetTranscription, handleGetTranscript, handleUploadAndProcess } from './handlers/api';
 import { handleTelegramWebhook } from './handlers/telegram';
 import { handleSyncEntitlements, handleGetEntitlements, handleCheckAccess } from './handlers/users';
 import { handlePaddleWebhook, handleCustomerPortal, handleSubscriptionCancel } from './handlers/paddle';

@@ -1,5 +1,5 @@
-import { transcribeAudio } from '../services/transcription.js';
 import { getChatCompletion } from '../services/chat.js';
+import { AiService } from '../services/ai.service.js';
 
 export function createHandlers(env) {
   return {
@@ -110,6 +110,7 @@ Just upload your audio file and I'll handle the rest!`, {
 
 async function handleFileProcessing(ctx, fileInfo, env) {
   const chatId = ctx.chat.id;
+  const aiService = new AiService(env.OPENAI_API_KEY, ctx.logger);
   
   ctx.logger.info('Processing audio file', { 
     chatId,
@@ -150,7 +151,7 @@ async function handleFileProcessing(ctx, fileInfo, env) {
     });
     
     // Transcribe audio
-    const transcription = await transcribeAudio(audioBuffer, env.OPENAI_API_KEY, ctx.logger);
+    const transcription = await aiService.transcribeAudio(audioBuffer);
     
     if (transcription.trim()) {
       ctx.logger.info('Transcription completed successfully', { 

@@ -1,4 +1,3 @@
-import { transcribeAudio } from '../services/transcription';
 import { StorageService } from '../services/storage';
 import { TranscriptionsService, TranscriptionSource } from '../services/transcriptions';
 import { createOrGetDatabase } from '../db';
@@ -233,16 +232,14 @@ export async function handleUploadAndProcess(c: HonoContext): Promise<Response> 
       requestId
     });
     
-    // Use the existing simple transcription orchestrator
-    const { createServices } = await import('../services/serviceFactory.js');
-    const services = createServices(c.env, logger);
-
     // Convert file to array buffer
     const audioBuffer = await audioFile.arrayBuffer();
     
-    // Create transcription using orchestrator 
-    // (this handles upload to R2 and queueing)
-    const result = await services.transcriptionOrchestrator.createTranscription({
+    // Use business service that wraps the orchestrator
+    const { createServices } = await import('../services/serviceFactory.js');
+    const services = createServices(c.env, logger);
+
+    const result = await services.transcriptionBusinessService.createTranscription({
       audioBuffer,
       filename: audioFile.name || 'audio.m4a',
       source: 'web',
@@ -258,7 +255,7 @@ export async function handleUploadAndProcess(c: HonoContext): Promise<Response> 
 
     return c.json({
       transcriptionId: result.transcriptionId,
-      jobId: result.transcriptionId, // Backward compatibility 
+      jobId: result.transcriptionId, // Backward compatibility
       status: 'pending',
       estimatedDuration: result.estimatedDuration,
       requestId

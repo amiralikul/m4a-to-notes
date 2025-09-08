@@ -37,15 +37,14 @@ interface ExecutionContext {
 export class TranscriptionQueueConsumer {
   private env: Env;
   private logger: Logger;
+  private services: ReturnType<typeof createServices>;
   private orchestrator: TranscriptionOrchestrator;
 
-  constructor(env: Env, logger: Logger) {
+  constructor(env: Env, logger: Logger, services: ReturnType<typeof createServices>) {
     this.env = env;
     this.logger = logger;
-    
-    // Use service factory to create orchestrator with all dependencies
-    const services = createServices(env, logger);
     this.orchestrator = services.transcriptionOrchestrator;
+    this.services = services;
   }
 
   /**
@@ -69,8 +68,7 @@ export class TranscriptionQueueConsumer {
     });
 
     // Fetch full transcription details from database (single source of truth)
-    const services = createServices(this.env, this.logger);
-    const transcription = await services.transcriptionsService.findById(transcriptionId);
+    const transcription = await this.services.transcriptionsService.findById(transcriptionId);
     
     if (!transcription) {
       throw new Error(`Transcription not found in database: ${transcriptionId}`);
@@ -97,7 +95,7 @@ export class TranscriptionQueueConsumer {
       await this.orchestrator.processTranscription(transcriptionId);
 
       // Get the transcription result to check status
-      const processedTranscription = await services.transcriptionsService.findById(transcriptionId);
+      const processedTranscription = await this.services.transcriptionsService.findById(transcriptionId);
       
       if (!processedTranscription) {
         throw new Error('Transcription record not found after processing');
@@ -217,7 +215,8 @@ export class TranscriptionQueueConsumer {
  */
 export async function handleQueueMessage(batch: MessageBatch<TranscriptionQueueMessage>, env: Env, _ctx?: ExecutionContext) {
   const logger = new (await import('../logger.js')).default(env.LOG_LEVEL || 'INFO');
-  const transcriptionConsumer = new TranscriptionQueueConsumer(env, logger);
+  const services = createServices(env, logger)
+  const transcriptionConsumer = new TranscriptionQueueConsumer(env, logger, services);
 
   // Process each message in the batch
   for (const message of batch.messages) {

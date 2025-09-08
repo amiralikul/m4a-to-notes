@@ -1,11 +1,19 @@
 /**
  * Transcription Orchestrator
- * Handles the business logic of transcription workflow
+ * 
+ * Responsibilities:
+ * - Technical workflow coordination (upload → store → transcribe → cleanup)
+ * - Service integration (Storage, Database, OpenAI, Queue)
+ * - Progress tracking and state management
+ * - Error handling with cleanup
+ * - Idempotent processing (safe to retry)
+ * 
+ * Note: Business validation (file size, type) should be done in the business service layer
  * Uses domain-focused TranscriptionsService for data operations
  */
 import { TranscriptionsService, TranscriptionStatus } from './transcriptions';
 import { StorageService } from './storage';
-import { transcribeAudio } from './transcription';
+import { AiService } from './ai.service';
 import Logger from '../logger';
 import type { Queue } from '@cloudflare/workers-types'
 
@@ -13,7 +21,7 @@ export class TranscriptionOrchestrator {
   constructor(
     private transcriptionsService: TranscriptionsService,
     private storageService: StorageService,
-    private openaiKey: string,
+    private aiService: AiService,
     private logger: Logger,
     private queue?: Queue<any> // Cloudflare Queue binding
   ) {}
@@ -73,7 +81,8 @@ export class TranscriptionOrchestrator {
 
       // Transcribe
       this.logger.info('Starting transcription', { transcriptionId, fileSize: audioBuffer.byteLength });
-      const transcriptText = await transcribeAudio(audioBuffer, this.openaiKey, this.logger);
+
+      const transcriptText = await this.aiService.transcribeAudio(audioBuffer);
       
       if (!transcriptText.trim()) {
         throw new Error('No speech detected in audio');
@@ -240,6 +249,101 @@ export class TranscriptionOrchestrator {
     return { transcriptionId, estimatedDuration };
   }
 
+  /**
+   * Clean up audio file after successful processing
+   */
+  private async cleanupAudioFile(audioKey: string, transcriptionId: string): Promise<void> {
+    try {
+      await this.storageService.deleteObject(audioKey);
+      this.logger.info('Cleaned up processed audio file', { 
+        transcriptionId, 
+        audioKey
+      });
+    } catch (cleanupError) {
+      // Don't fail the transcription if cleanup fails
+      const errorMessage = cleanupError instanceof Error ? cleanupError.message : 'Unknown cleanup error';
+      this.logger.warn('Failed to clean up audio file', {
+        transcriptionId,
+        audioKey,
+        error: errorMessage
+      });
+    }
+  }
+
+  /**
+   * Handle processing errors with proper cleanup and database updates
+   */
+  private async handleProcessingError(error: any, transcription: any): Promise<void> {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const transcriptionId = transcription.id;
+    
+    this.logger.error('Transcription processing failed', { 
+      transcriptionId, 
+      error: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined,
+      // Log additional error details for debugging
+      errorType: error?.constructor?.name,
+      audioKey: transcription.audioKey,
+      filename: transcription.filename
+    });
+
+    try {
+      // Determine error code based on error type/message
+      const errorCode = this.categorizeError(errorMessage);
+      
+      // Mark as failed in database with more specific error code
+      await this.transcriptionsService.markFailed(transcriptionId, errorCode, errorMessage);
+
+      // Attempt cleanup of uploaded audio file on failure
+      if (transcription.audioKey) {
+        try {
+          await this.storageService.deleteObject(transcription.audioKey);
+          this.logger.info('Cleaned up audio file after transcription failure', { 
+            transcriptionId, 
+            audioKey: transcription.audioKey
+          });
+        } catch (cleanupError) {
+          this.logger.warn('Failed to clean up audio file after transcription failure', {
+            transcriptionId,
+            audioKey: transcription.audioKey,
+            cleanupError: cleanupError instanceof Error ? cleanupError.message : 'Unknown cleanup error'
+          });
+        }
+      }
+    } catch (dbError) {
+      this.logger.error('Failed to mark transcription as failed in database', {
+        transcriptionId,
+        originalError: errorMessage,
+        dbError: dbError instanceof Error ? dbError.message : 'Unknown DB error'
+      });
+    }
+  }
+
+  /**
+   * Categorize errors for better error handling
+   */
+  private categorizeError(errorMessage: string): string {
+    if (errorMessage.includes('timeout')) {
+      return 'TRANSCRIPTION_TIMEOUT';
+    }
+    if (errorMessage.includes('OpenAI') || errorMessage.includes('API')) {
+      return 'OPENAI_API_ERROR';
+    }
+    if (errorMessage.includes('No speech detected')) {
+      return 'NO_SPEECH_DETECTED';
+    }
+    if (errorMessage.includes('File size') || errorMessage.includes('too large')) {
+      return 'FILE_SIZE_ERROR';
+    }
+    if (errorMessage.includes('network') || errorMessage.includes('connection')) {
+      return 'NETWORK_ERROR';
+    }
+    return 'TRANSCRIPTION_ERROR';
+  }
+
+  /**
+   * Guess MIME type based on file extension
+   */
   private guessMimeType(filename: string): string {
     const ext = filename.toLowerCase().split('.').pop();
     switch (ext) {
