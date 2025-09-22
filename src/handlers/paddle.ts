@@ -97,20 +97,22 @@ export async function handlePaddleWebhook(c: HonoContext): Promise<Response> {
     logger.info('Processing webhook event', {
       requestId,
       eventType: event.event_type,
-      eventId: event.event_id
+      eventId: event.event_id,
+      eventData: event.data
     });
     
+    const subscriptionId = event.data?.subscriptionId;
     // Extract subscription ID for canonical state fetching
-    const subscriptionId = event.data?.id || event.data?.subscription?.id;
+    if (event.event_type === 'transaction.completed' && subscriptionId) {    
     
-    if (!subscriptionId) {
-      // Non-subscription events (like transaction.completed) don't need sync
-      logger.info('Non-subscription event, acknowledging', { 
-        requestId,
-        eventType: event.event_type 
-      });
-      return c.json({ received: true, requestId });
-    }
+    // if (!subscriptionId) {
+    //   // Non-subscription events (like transaction.completed) don't need sync
+    //   logger.info('Non-subscription event, acknowledging', { 
+    //     requestId,
+    //     eventType: event.event_type 
+    //   });
+    //   return c.json({ received: true, requestId });
+    // }
     
     // 4. Fetch canonical state and sync (T3 style)
     const db = createOrGetDatabase(c.env, logger);
@@ -122,8 +124,10 @@ export async function handlePaddleWebhook(c: HonoContext): Promise<Response> {
       subscriptionId,
       eventType: event.event_type
     });
-    
+    }
+
     return c.json({ received: true, requestId });
+
     
   } catch (error) {
     logger.error('Webhook processing failed', {
